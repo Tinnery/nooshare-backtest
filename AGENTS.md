@@ -17,8 +17,8 @@
 | 执行模型 | `implementation-docs/nooshare-backtest/execution-model.md` |
 | 使用说明 | `implementation-docs/nooshare-backtest/usage.md` |
 | README 原文归档 | `implementation-docs/nooshare-backtest/README-full.md` |
-| 系统设计（需求、领域模型、逻辑架构、跨仓职责、架构决策） | `architecture/backtest-implementation.md`、`architecture/adr-0002-product-and-backtest-boundaries.md` |
-| 产品与回测边界 | `architecture/adr-0002-product-and-backtest-boundaries.md`、`architecture/matrix.md` |
+| 系统设计（需求、领域模型、逻辑架构、跨仓职责、架构决策） | `architecture/backtest-implementation.md`、`architecture/matrix.md 第 4 节` |
+| 产品与回测边界 | `architecture/matrix.md 第 4 节`、`architecture/matrix.md` |
 
 通过 `workspace.yaml` 定位 nooshare-design 的 checkout 路径后读取上述文件。
 
