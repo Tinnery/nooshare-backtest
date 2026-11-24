@@ -1,7 +1,7 @@
 """绩效指标实现契约。
 
 年化口径与 nooshare-strategy 基线一致：244 交易日/年。
-每个指标都在 docs/execution-model.md 中给出公式，便于复核与基线对照。
+每个指标的公式见 nooshare-design 的 implementation-docs/nooshare-backtest/execution-model.md。
 """
 from __future__ import annotations
 
