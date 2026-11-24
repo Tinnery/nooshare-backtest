@@ -1,0 +1,11 @@
+{
+  "initial_cash": 1000000,
+  "run_id": "cli-minimal",
+  "bars": [
+    {"date": 20240102, "symbol": "AAA", "open": 10.0, "high": 10.2, "low": 9.9, "close": 10.1, "volume": 1000000, "ret": 0.01},
+    {"date": 20240103, "symbol": "AAA", "open": 10.2, "high": 10.5, "low": 10.1, "close": 10.4, "volume": 1000000, "ret": 0.02}
+  ],
+  "decisions": [
+    {"decision_date": 20240102, "weights": {"AAA": 0.5}}
+  ]
+}

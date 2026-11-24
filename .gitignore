@@ -26,6 +26,11 @@ ENV/
 env/
 .venv
 
+# Test & tool caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
 # Data
 *.parquet
 *.feather
@@ -61,6 +66,7 @@ Thumbs.db
 # Backtest specific
 results/
 output/
+out/
 cache/
 *.pkl
 *.pickle
