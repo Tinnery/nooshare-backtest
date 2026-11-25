@@ -83,6 +83,8 @@ class TargetPortfolio:
     version: str = "unknown"
     signal_ids: dict[str, str] = field(default_factory=dict)
     hold: frozenset[str] = frozenset()
+    exit_event_ids: dict[str, str] = field(default_factory=dict)
+    decision_reasons: dict[str, str] = field(default_factory=dict)
 
 
 # ---------- 订单与成交 ----------
@@ -107,6 +109,8 @@ class Order:
     canonical_id: str = ""
     exchange: str = ""
     filled_shares: int = 0
+    exit_event_id: str = ""
+    decision_reason: str = ""
 
     @property
     def shares(self) -> int:

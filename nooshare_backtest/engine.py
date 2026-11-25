@@ -136,7 +136,7 @@ def run(
             ))
 
     # 从实际成交事件流构建交易生命周期与分配关系
-    trades, allocations = build_trades(fills, dates, run_id=cfg.run_id)
+    trades, allocations = build_trades(fills, dates, run_id=cfg.run_id, orders=orders)
 
     ledger = list(portfolio.ledger)
     metadata = RunMetadata(

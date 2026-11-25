@@ -39,15 +39,24 @@ def build_trades(
     fills: list[Fill],
     trading_dates: list[int],
     run_id: str = "run",
+    orders: list | None = None,
 ) -> tuple[list[Trade], list[TradeFillAllocation]]:
     """按时间顺序消费 Fill，构建完整 Trade 生命周期与分配记录。
 
     fills 必须已按 (date, 卖出先于买入) 的执行顺序排列——引擎保证该顺序。
+    orders 可选：提供时从 BUY Order 提取 signal_id 写入 initial_signal_id，
+    从 SELL Order 提取 decision_reason 写入 exit_reason。
     """
     trades: list[Trade] = []
     allocations: list[TradeFillAllocation] = []
     open_trades: dict[str, _OpenTrade] = {}
     trade_seq = 0
+    # 构建 order_id -> Order 映射，供 Fill 反查 signal_id / decision_reason
+    order_map: dict[str, any] = {}
+    if orders:
+        for o in orders:
+            if hasattr(o, "order_id") and o.order_id:
+                order_map[o.order_id] = o
 
     for fill in fills:
         t = open_trades.get(fill.symbol)
@@ -55,10 +64,14 @@ def build_trades(
             if t is None:
                 tid = event_id(run_id, "trade", fill.symbol, trade_seq)
                 trade_seq += 1
+                # 从 BUY Order 提取 signal_id 作为 initial_signal_id
+                init_sig = ""
+                if fill.order_id and fill.order_id in order_map:
+                    init_sig = order_map[fill.order_id].signal_id
                 t = _OpenTrade(
                     trade_id=tid, symbol=fill.symbol,
                     canonical_id=fill.canonical_id, exchange=fill.exchange,
-                    initial_signal_id="", opened_date=fill.date,
+                    initial_signal_id=init_sig, opened_date=fill.date,
                 )
                 open_trades[fill.symbol] = t
             paid = -fill.net_cash
@@ -95,7 +108,11 @@ def build_trades(
                 t.exit_notional += fill.price * consumed
                 t.costs += fill.total_cost * prop
                 allocations.append(TradeFillAllocation(t.trade_id, fill.fill_id, "EXIT", consumed))
-                t.exit_reason = "TARGET_WEIGHT"
+                # 从 SELL Order 提取 decision_reason（STOP_LOSS/TAKE_PROFIT/TARGET_WEIGHT）
+                dec_reason = "TARGET_WEIGHT"
+                if fill.order_id and fill.order_id in order_map:
+                    dec_reason = order_map[fill.order_id].decision_reason or "TARGET_WEIGHT"
+                t.exit_reason = dec_reason
             if t.shares == 0 and not t.unresolved:
                 _finalize(t, trades, trading_dates, closed_date=fill.date)
                 del open_trades[fill.symbol]

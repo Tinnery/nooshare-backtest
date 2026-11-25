@@ -80,6 +80,9 @@ def plan_orders(
         side = "BUY" if delta > 0 else "SELL"
         decision_id, signal_id = _identity(target, symbol)
         oid = event_id(run_id, "order", date, idx)
+        # 退出事件透传：策略层为 SELL 给出的 exit_event_id 和 decision_reason
+        exit_eid = target.exit_event_ids.get(symbol, "") if side == "SELL" else ""
+        dec_reason = target.decision_reasons.get(symbol, "") if side == "SELL" else ""
         orders.append(Order(
             date=date, symbol=symbol, side=side,
             requested_shares=abs(delta), target_weight=weight,
@@ -87,6 +90,7 @@ def plan_orders(
             decision_date=target.decision_date,
             canonical_id=bar.canonical_id if bar else "",
             exchange=bar.exchange if bar else "",
+            exit_event_id=exit_eid, decision_reason=dec_reason,
         ))
     # 先卖后买，释放现金供买入；order_id 已确定，顺序稳定可复现。
     orders.sort(key=lambda o: (o.side != "SELL", o.symbol))
@@ -104,6 +108,7 @@ def _order_with_final(
         decision_date=order.decision_date,
         canonical_id=order.canonical_id, exchange=order.exchange,
         filled_shares=filled,
+        exit_event_id=order.exit_event_id, decision_reason=order.decision_reason,
     )
 
 
