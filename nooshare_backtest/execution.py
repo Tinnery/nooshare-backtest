@@ -58,11 +58,15 @@ def plan_orders(
     """按目标权重生成订单。以执行日开盘价估算目标股数。
 
     exec_date 为实际执行日（T 日决策的下一交易日）；未传时兼容旧调用使用决策日。
+    target.hold 中的持仓保持现状，不生成订单（不调仓、不清仓）。
     """
     date = exec_date if exec_date is not None else target.decision_date
     orders: list[Order] = []
     # 目标组合中未列出的持仓视为目标权重 0，需要卖出；不能只遍历 weights 键。
-    symbols = sorted(set(target.weights) | set(portfolio.positions))
+    # hold 集合显式排除：策略声明保持现状的持仓不参与订单推导。
+    symbols = sorted(
+        (set(target.weights) | set(portfolio.positions)) - set(target.hold)
+    )
     for idx, symbol in enumerate(symbols):
         weight = target.weights.get(symbol, 0.0)
         bar = bars.get(symbol)

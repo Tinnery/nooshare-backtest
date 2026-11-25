@@ -72,6 +72,9 @@ class TargetPortfolio:
     """策略在 decision_date 收盘后给出的目标组合。
 
     weights: symbol -> 目标权重（0..1，允许所有权重之和 <= 1，剩余为现金）。
+    hold: 明确保持现状的持仓集合——不生成任何订单（不调仓、不清仓），
+    与「未列出 = 目标权重 0 = 卖出」的默认语义区分，供路径依赖规则表达
+    「继续持有」而不产生开盘价与收盘价差异导致的噪声调仓。
     signal_ids: symbol -> 原始 signal_id（可选）。无法唯一关联时留空，
     引擎不猜测信号。引擎在下一交易日按规则执行，不假设 decision_date 当日成交。
     """
@@ -79,6 +82,7 @@ class TargetPortfolio:
     weights: dict[str, float]
     version: str = "unknown"
     signal_ids: dict[str, str] = field(default_factory=dict)
+    hold: frozenset[str] = frozenset()
 
 
 # ---------- 订单与成交 ----------

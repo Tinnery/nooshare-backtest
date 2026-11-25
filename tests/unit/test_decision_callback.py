@@ -121,3 +121,40 @@ def test_last_day_callback_decision_marked_no_next_session():
     result = run(_bars(), decide, EngineConfig(run_id="cb-last"))
     reasons = [d.reason for d in result.deviations]
     assert "NO_NEXT_SESSION" in reasons
+
+
+def test_hold_position_generates_no_orders():
+    """hold 声明的持仓不生成订单：不调仓、不清仓。"""
+
+    def decide(ctx: DecisionContext) -> TargetPortfolio | None:
+        if ctx.date == 20240101:
+            return TargetPortfolio(decision_date=ctx.date, weights={"sh600001": 0.95})
+        if ctx.date == 20240103:
+            # T2 收盘：保持持仓不动（不列 weights，仅 hold），即使价格大跌
+            assert ctx.positions[0].symbol == "sh600001"
+            return TargetPortfolio(decision_date=ctx.date, weights={}, hold=frozenset({"sh600001"}))
+        return None
+
+    result = run(_bars(), decide, EngineConfig(run_id="cb-hold"))
+    sells = [f for f in result.fills if f.side == "SELL"]
+    assert sells == [], "hold 持仓不得被清仓"
+    # T3 收盘持仓仍在（T2 未触发卖出，T3 无决策）
+    final = [p for p in result.positions if p.date == 20240104]
+    assert final and final[0].shares > 0
+
+
+def test_hold_position_eventually_sellable_via_weights():
+    """hold 后改变主意（权重 0）仍可清仓。"""
+
+    def decide(ctx: DecisionContext) -> TargetPortfolio | None:
+        if ctx.date == 20240101:
+            return TargetPortfolio(decision_date=ctx.date, weights={"sh600001": 0.95})
+        if ctx.date == 20240102:
+            return TargetPortfolio(decision_date=ctx.date, weights={}, hold=frozenset({"sh600001"}))
+        if ctx.date == 20240103:
+            return TargetPortfolio(decision_date=ctx.date, weights={})  # 清仓
+        return None
+
+    result = run(_bars(), decide, EngineConfig(run_id="cb-hold-sell"))
+    sells = [f for f in result.fills if f.side == "SELL"]
+    assert len(sells) == 1 and sells[0].date == 20240104
