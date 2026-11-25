@@ -17,6 +17,8 @@ from dataclasses import dataclass
 from .accounting import Portfolio
 from .costs import CostModel
 from .models import Bar, Fill, Order, TargetDeviation, TargetPortfolio, event_id
+
+# Re-export for clarity; used to stamp trade_id onto BUY fills before apply_fill.
 from .rules import RuleSet
 
 LOT = 100
@@ -54,18 +56,44 @@ def plan_orders(
     cfg: ExecutionConfig,
     exec_date: int | None = None,
     run_id: str = "run",
+    pending_exits: dict[str, dict] | None = None,
 ) -> list[Order]:
     """按目标权重生成订单。以执行日开盘价估算目标股数。
 
     exec_date 为实际执行日（T 日决策的下一交易日）；未传时兼容旧调用使用决策日。
     target.hold 中的持仓保持现状，不生成订单（不调仓、不清仓）。
+    pending_exits 为待退出意图，生成带 exit_event_id 的 SELL 订单。
     """
     date = exec_date if exec_date is not None else target.decision_date
     orders: list[Order] = []
+    
+    # 1. 先生成待退出订单（优先级最高）
+    if pending_exits:
+        for symbol, exit_info in pending_exits.items():
+            bar = bars.get(symbol)
+            if bar is None:
+                continue
+            shares = portfolio.shares_of(symbol)
+            if shares <= 0:
+                continue
+            oid = event_id(run_id, "order", date, f"exit_{symbol}")
+            orders.append(Order(
+                date=date, symbol=symbol, side="SELL",
+                requested_shares=shares, target_weight=0.0,
+                order_id=oid, signal_id="",
+                decision_date=target.decision_date,
+                canonical_id=bar.canonical_id, exchange=bar.exchange,
+                exit_event_id=exit_info["exit_event_id"],
+                decision_reason=exit_info["reason"],
+            ))
+    
+    # 2. 再生成常规调仓订单
     # 目标组合中未列出的持仓视为目标权重 0，需要卖出；不能只遍历 weights 键。
     # hold 集合显式排除：策略声明保持现状的持仓不参与订单推导。
+    # 已有待退出的持仓不参与常规订单推导
+    exit_symbols = set(pending_exits.keys()) if pending_exits else set()
     symbols = sorted(
-        (set(target.weights) | set(portfolio.positions)) - set(target.hold)
+        (set(target.weights) | set(portfolio.positions)) - set(target.hold) - exit_symbols
     )
     for idx, symbol in enumerate(symbols):
         weight = target.weights.get(symbol, 0.0)
@@ -80,9 +108,6 @@ def plan_orders(
         side = "BUY" if delta > 0 else "SELL"
         decision_id, signal_id = _identity(target, symbol)
         oid = event_id(run_id, "order", date, idx)
-        # 退出事件透传：策略层为 SELL 给出的 exit_event_id 和 decision_reason
-        exit_eid = target.exit_event_ids.get(symbol, "") if side == "SELL" else ""
-        dec_reason = target.decision_reasons.get(symbol, "") if side == "SELL" else ""
         orders.append(Order(
             date=date, symbol=symbol, side=side,
             requested_shares=abs(delta), target_weight=weight,
@@ -90,7 +115,6 @@ def plan_orders(
             decision_date=target.decision_date,
             canonical_id=bar.canonical_id if bar else "",
             exchange=bar.exchange if bar else "",
-            exit_event_id=exit_eid, decision_reason=dec_reason,
         ))
     # 先卖后买，释放现金供买入；order_id 已确定，顺序稳定可复现。
     orders.sort(key=lambda o: (o.side != "SELL", o.symbol))
@@ -108,12 +132,14 @@ def _order_with_final(
         decision_date=order.decision_date,
         canonical_id=order.canonical_id, exchange=order.exchange,
         filled_shares=filled,
-        exit_event_id=order.exit_event_id, decision_reason=order.decision_reason,
+        exit_event_id=order.exit_event_id,
+        decision_reason=order.decision_reason,
     )
 
 
 def _fill(
     order: Order, bd: dict[str, float], date: int, seq: int, shares: int,
+    trade_id: str = "",
 ) -> Fill:
     return Fill(
         date=date, symbol=order.symbol, side=order.side, shares=shares,
@@ -122,6 +148,7 @@ def _fill(
         slippage=bd["slippage"],
         fill_id=event_id(order.order_id or "run", "fill", date, seq),
         order_id=order.order_id,
+        trade_id=trade_id,
         canonical_id=order.canonical_id, exchange=order.exchange,
     )
 
@@ -134,8 +161,16 @@ def execute_orders(
     rules: RuleSet,
     costs: CostModel,
     cfg: ExecutionConfig,
+    run_id: str = "run",
+    trade_ids: dict[str, str] | None = None,
+    trade_seqs: list[int] | None = None,
 ) -> tuple[list[Fill], list[Order], list[TargetDeviation]]:
-    """逐单执行：规则判定 → 成交模拟 → 落账 → 记录差异。"""
+    """逐单执行：规则判定 → 成交模拟 → 落账 → 记录差异。
+
+    trade_ids: symbol -> trade_id 映射，用于在 BUY fill 落账前回填 trade_id，
+    使 portfolio.apply_fill 能在首笔 BUY 时建立 Position.trade_id。
+    trade_seqs: 单元素列表 [seq]，用于生成新 trade_id 时自增（用 list 以便在函数内修改）。
+    """
     fills: list[Fill] = []
     final_orders: list[Order] = []
     deviations: list[TargetDeviation] = []
@@ -186,8 +221,18 @@ def execute_orders(
             deviations.append(TargetDeviation(date, order.symbol, order.target_weight,
                                               order.requested_shares, 0, "INSUFFICIENT_CASH"))
             continue
+        # 在创建 fill 之前确定 trade_id：已有则复用，否则新建
+        if trade_ids is not None and trade_seqs is not None:
+            if order.symbol not in trade_ids:
+                trade_ids[order.symbol] = event_id(
+                    run_id, "trade", order.symbol, trade_seqs[0]
+                )
+                trade_seqs[0] += 1
+            fill_trade_id = trade_ids[order.symbol]
+        else:
+            fill_trade_id = ""
         bd = costs.breakdown(bar.open, shares, "BUY")
-        fill = _fill(order, bd, date, 1000 + seq, shares)
+        fill = _fill(order, bd, date, 1000 + seq, shares, trade_id=fill_trade_id)
         portfolio.apply_fill(fill)
         fills.append(fill)
         status = ORDER_FILLED if shares == order.requested_shares else ORDER_PARTIAL

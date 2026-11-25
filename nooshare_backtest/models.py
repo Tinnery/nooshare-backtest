@@ -20,6 +20,31 @@ EVENT_NAMESPACE = uuid.UUID("6f8d1b3a-2c47-5e91-9a04-7b3d6e2f18c5")
 SCHEMA_VERSION = 2
 LEGACY_SCHEMA_VERSION = 0  # 无事件身份的旧 JSON，不伪造历史关联
 
+# 退出原因常量
+EXIT_STOP_LOSS = "STOP_LOSS"
+EXIT_TAKE_PROFIT = "TAKE_PROFIT"
+EXIT_STRATEGY = "STRATEGY_EXIT"
+
+
+def exit_event_id(
+    run_id: str,
+    trade_id: str,
+    decision_date: int,
+    reason: str,
+    reference_price: float = 0.0,
+    stop_price: float = 0.0,
+    take_price: float = 0.0,
+) -> str:
+    """确定性生成 ExitEvent UUID（UUID5）。
+
+    同一回测中同一 Trade、同一次退出触发，必须只有一个稳定的 ExitEvent ID。
+    """
+    key = ":".join([
+        str(run_id), "exit", str(trade_id), str(decision_date),
+        str(reason), str(reference_price), str(stop_price), str(take_price),
+    ])
+    return str(uuid.uuid5(EVENT_NAMESPACE, key))
+
 
 def event_id(run_id: str, kind: str, *parts: Any) -> str:
     """确定性生成事件 UUID（UUID5，namespace + run_id + kind + 序号）。"""
@@ -77,14 +102,16 @@ class TargetPortfolio:
     「继续持有」而不产生开盘价与收盘价差异导致的噪声调仓。
     signal_ids: symbol -> 原始 signal_id（可选）。无法唯一关联时留空，
     引擎不猜测信号。引擎在下一交易日按规则执行，不假设 decision_date 当日成交。
+    exit_signals: symbol -> (reason, reference_price, stop_price, take_price)。
+    策略检测到止盈/止损触发时填写，引擎据此生成带 exit_event_id 的 SELL 订单，
+    并在未完全成交时持续重试直到平仓或回测结束。
     """
     decision_date: int
     weights: dict[str, float]
     version: str = "unknown"
     signal_ids: dict[str, str] = field(default_factory=dict)
     hold: frozenset[str] = frozenset()
-    exit_event_ids: dict[str, str] = field(default_factory=dict)
-    decision_reasons: dict[str, str] = field(default_factory=dict)
+    exit_signals: dict[str, tuple[str, float, float, float]] = field(default_factory=dict)
 
 
 # ---------- 订单与成交 ----------
@@ -139,6 +166,7 @@ class Fill:
     slippage: float
     fill_id: str = ""
     order_id: str = ""
+    trade_id: str = ""
     canonical_id: str = ""
     exchange: str = ""
 
@@ -230,6 +258,7 @@ class PositionView:
     first_entry_price / first_entry_date 取自当前存活批次中最早批次的
     不含费用买入价与买入日，供路径依赖退出规则（止盈止损）以建仓价为基准。
     分批加仓不改基准；建仓批次全部卖出后以剩余最早批次为准。
+    trade_id 在首笔 BUY Fill 时建立，供策略回调直接引用。
     """
     symbol: str
     shares: int
@@ -237,6 +266,7 @@ class PositionView:
     first_entry_price: float  # 存活最早批次不含费用买入价
     first_entry_date: int     # 该批次买入日（YYYYMMDD）
     sellable_shares: int      # T+1 规则下的当日可卖股数
+    trade_id: str = ""        # 首笔 BUY Fill 时建立的 Trade ID
 
 
 @dataclass(frozen=True)

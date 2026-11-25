@@ -29,6 +29,7 @@ class _Position:
     shares: int
     cost_basis: float          # 持仓总成本（含买入费用）
     lots: list[_Lot] = field(default_factory=list)
+    trade_id: str = ""         # 首笔 BUY Fill 时建立的 Trade ID
 
     @property
     def avg_cost(self) -> float:
@@ -79,6 +80,9 @@ class Portfolio:
             if pos is None:
                 pos = _Position(shares=0, cost_basis=0.0)
                 self.positions[fill.symbol] = pos
+            # 首笔 BUY Fill 时建立 Trade ID（后续加仓不改）
+            if not pos.trade_id and fill.trade_id:
+                pos.trade_id = fill.trade_id
             paid = -fill.net_cash           # 含费用
             pos.cost_basis += paid
             pos.shares += fill.shares
@@ -113,7 +117,7 @@ class Portfolio:
         return pos.shares if pos else 0
 
     def position_views(self, date: int) -> list[PositionView]:
-        """产出决策回调用的持仓视图（存活最早批次 + T+1 可卖数）。
+        """产出决策回调用的持仓视图（存活最早批次 + T+1 可卖数 + trade_id）。
 
         lots 由 FIFO 消费保持按买入日有序，首个批次即存活最早批次。
         """
@@ -127,6 +131,7 @@ class Portfolio:
                 first_entry_price=first.pure_price if first else pos.avg_cost,
                 first_entry_date=first.bought_date if first else date,
                 sellable_shares=self.sellable_shares(symbol, date),
+                trade_id=pos.trade_id,
             ))
         return views
 

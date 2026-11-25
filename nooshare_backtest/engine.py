@@ -5,11 +5,17 @@
 
 时间语义：T 日收盘后的目标组合只在下一交易日（T+1）按开盘价执行。
 本内核不产生策略，只忠实执行给出的目标组合。
+
+V0.3 新增：
+- Trade ID 在首笔 BUY Fill 时早期建立，通过 PositionView 暴露给策略回调
+- ExitEvent 完整身份（run_id + trade_id + decision_date + reason + prices）
+- 退出重试机制：止盈/止损触发后持续重试直到完全平仓或回测结束
+- 止损优先于止盈（同日同时触发时）
 """
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Mapping
 
 from .accounting import Portfolio
@@ -20,10 +26,15 @@ from .models import (
     BacktestResult,
     Bar,
     CostSummary,
+    EXIT_STOP_LOSS,
+    EXIT_TAKE_PROFIT,
+    Order,
     PositionView,
     RunMetadata,
     TargetDeviation,
     TargetPortfolio,
+    event_id,
+    exit_event_id,
 )
 from .rules import RuleSet
 from .trades import build_trades
@@ -42,13 +53,34 @@ class DecisionContext:
     """收盘决策时点交给策略的引擎真实状态。
 
     date 为收盘决策日；positions 为 T+1 口径下的持仓视图
-    （first_entry_date/first_entry_price 可用于路径依赖退出规则的建仓基准）。
+    （first_entry_date/first_entry_price 可用于路径依赖退出规则的建仓基准；
+    trade_id 在首笔 BUY Fill 时建立，供策略直接引用）。
+    pending_exits 为尚未完成的退出意图列表，策略可据此决定是否继续重试。
     """
     date: int
     bars: Mapping[str, Bar]
     positions: tuple[PositionView, ...]
     cash: float
     total_asset: float
+    pending_exits: tuple[PendingExit, ...] = ()
+
+
+@dataclass(frozen=True)
+class PendingExit:
+    """尚未完成的退出意图。
+
+    首次触发止盈/止损时创建，后续日期即使没有再次碰到阈值也继续发出 SELL 目标。
+    所有重试订单引用同一个 exit_event_id。完全平仓后才结束这项退出意图。
+    """
+    exit_event_id: str
+    trade_id: str
+    symbol: str
+    reason: str               # STOP_LOSS / TAKE_PROFIT
+    decision_date: int        # 首次触发日（T 日收盘判断）
+    reference_price: float    # 触发时参考价（建仓价或收盘价）
+    stop_price: float         # 止损价（0 表示无止损）
+    take_price: float         # 止盈价（0 表示无止盈）
+    remaining_shares: int     # 尚未卖出的数量
 
 
 @dataclass(frozen=True)
@@ -60,6 +92,20 @@ class EngineConfig:
     cost_model: CostModel = CostModel()
     rules: RuleSet = RuleSet()
     execution: ExecutionConfig = ExecutionConfig()
+
+
+@dataclass
+class _ExitIntent:
+    """引擎内部维护的退出意图（可变，跟踪剩余数量）。"""
+    exit_event_id: str
+    trade_id: str
+    symbol: str
+    reason: str
+    decision_date: int
+    reference_price: float
+    stop_price: float
+    take_price: float
+    remaining_shares: int
 
 
 def run(
@@ -80,6 +126,12 @@ def run(
     pending: TargetPortfolio | None = None
     last_total_asset = cfg.initial_cash
 
+    # 退出意图：symbol -> _ExitIntent（同一 symbol 同时只维护一个退出意图）
+    pending_exits: dict[str, _ExitIntent] = {}
+    # Trade ID 早期建立：symbol -> trade_id（首笔 BUY Fill 时建立）
+    trade_ids: dict[str, str] = {}
+    trade_seq = 0
+
     equity_curve: list = []
     positions: list = []
     orders: list = []
@@ -91,16 +143,62 @@ def run(
         day_bars = dict(bars_by_date[date])
 
         # 1) 先执行上一交易日的决策（T -> T+1），使用上一收盘的总资产定目标股数
-        if pending is not None:
-            planned = plan_orders(pending, portfolio, day_bars, last_total_asset,
-                                  cfg.execution, exec_date=date, run_id=cfg.run_id)
+        # 即使 pending 为 None，只要有 pending_exits 也要执行退出订单
+        if pending is not None or pending_exits:
+            # 构造待退出意图字典供 plan_orders 使用
+            pending_exits_dict = {
+                symbol: {
+                    "exit_event_id": ei.exit_event_id,
+                    "reason": ei.reason,
+                }
+                for symbol, ei in pending_exits.items()
+            }
+            # 如果有 pending target，正常规划订单；否则只规划退出订单
+            if pending is not None:
+                planned = plan_orders(
+                    pending, portfolio, day_bars, last_total_asset,
+                    cfg.execution, exec_date=date, run_id=cfg.run_id,
+                    pending_exits=pending_exits_dict,
+                )
+            else:
+                # 只有退出订单，没有常规调仓
+                planned = plan_orders(
+                    TargetPortfolio(decision_date=date, weights={}),
+                    portfolio, day_bars, last_total_asset,
+                    cfg.execution, exec_date=date, run_id=cfg.run_id,
+                    pending_exits=pending_exits_dict,
+                )
+            
+            # Prepare mutable trade_seq for execute_orders to update
+            trade_seq_mut = [trade_seq]
+            
             day_fills, day_orders, day_devs = execute_orders(
-                planned, portfolio, day_bars, date, cfg.rules, cfg.cost_model, cfg.execution
+                planned, portfolio, day_bars, date, cfg.rules, cfg.cost_model, cfg.execution,
+                run_id=cfg.run_id, trade_ids=trade_ids, trade_seqs=trade_seq_mut,
             )
+            # Sync trade_seq back from execute_orders
+            trade_seq = trade_seq_mut[0]
+            
             fills.extend(day_fills)
             orders.extend(day_orders)
             deviations.extend(day_devs)
+            
+            # 更新待退出意图的剩余数量
             for fill in day_fills:
+                # 首笔 BUY Fill 时建立 Trade ID（如果 symbol 不在 trade_ids 中，说明是新持仓周期）
+                if fill.side == "BUY" and fill.symbol not in trade_ids:
+                    tid = event_id(cfg.run_id, "trade", fill.symbol, trade_seq)
+                    trade_seq += 1
+                    trade_ids[fill.symbol] = tid
+                # 如果是 SELL 且有对应的待退出意图，更新剩余数量
+                if fill.side == "SELL" and fill.symbol in pending_exits:
+                    pending_exits[fill.symbol].remaining_shares -= fill.shares
+                    if pending_exits[fill.symbol].remaining_shares <= 0:
+                        del pending_exits[fill.symbol]
+                # 如果 SELL 完全平仓，移除 trade_id 以便下次建仓时生成新 ID
+                if fill.side == "SELL" and portfolio.shares_of(fill.symbol) == 0:
+                    trade_ids.pop(fill.symbol, None)
+                
                 cost_total = CostSummary(
                     commission=cost_total.commission + fill.commission,
                     stamp_duty=cost_total.stamp_duty + fill.stamp_duty,
@@ -116,16 +214,75 @@ def run(
 
         # 3) 收盘后接收当日决策，留待下一交易日执行
         if callable(targets):
+            # 构造 pending_exits 快照给策略
+            exit_snapshots = tuple(
+                PendingExit(
+                    exit_event_id=ei.exit_event_id,
+                    trade_id=ei.trade_id,
+                    symbol=ei.symbol,
+                    reason=ei.reason,
+                    decision_date=ei.decision_date,
+                    reference_price=ei.reference_price,
+                    stop_price=ei.stop_price,
+                    take_price=ei.take_price,
+                    remaining_shares=ei.remaining_shares,
+                )
+                for ei in pending_exits.values()
+            )
             ctx = DecisionContext(
                 date=date,
                 bars=day_bars,
                 positions=tuple(portfolio.position_views(date)),
                 cash=portfolio.cash,
                 total_asset=point.total_asset,
+                pending_exits=exit_snapshots,
             )
             pending = targets(ctx)
+            # 处理策略返回的退出信号
+            if pending and pending.exit_signals:
+                for symbol, (reason, ref_px, stop_px, take_px) in pending.exit_signals.items():
+                    if symbol not in pending_exits:
+                        # 首次触发：创建新的退出意图
+                        trade_id = trade_ids.get(symbol, "")
+                        ee_id = exit_event_id(
+                            cfg.run_id, trade_id, date,
+                            reason, ref_px, stop_px, take_px,
+                        )
+                        shares = portfolio.shares_of(symbol)
+                        pending_exits[symbol] = _ExitIntent(
+                            exit_event_id=ee_id,
+                            trade_id=trade_id,
+                            symbol=symbol,
+                            reason=reason,
+                            decision_date=date,
+                            reference_price=ref_px,
+                            stop_price=stop_px,
+                            take_price=take_px,
+                            remaining_shares=shares,
+                        )
         else:
             pending = targets.get(date)
+            # 处理静态目标中的退出信号
+            if pending and pending.exit_signals:
+                for symbol, (reason, ref_px, stop_px, take_px) in pending.exit_signals.items():
+                    if symbol not in pending_exits:
+                        trade_id = trade_ids.get(symbol, "")
+                        ee_id = exit_event_id(
+                            cfg.run_id, trade_id, date,
+                            reason, ref_px, stop_px, take_px,
+                        )
+                        shares = portfolio.shares_of(symbol)
+                        pending_exits[symbol] = _ExitIntent(
+                            exit_event_id=ee_id,
+                            trade_id=trade_id,
+                            symbol=symbol,
+                            reason=reason,
+                            decision_date=date,
+                            reference_price=ref_px,
+                            stop_price=stop_px,
+                            take_price=take_px,
+                            remaining_shares=shares,
+                        )
 
     # 最后一日未执行的决策显式留痕
     if pending is not None and dates:
@@ -133,6 +290,18 @@ def run(
             deviations.append(TargetDeviation(
                 date=dates[-1], symbol=symbol, target_weight=weight,
                 target_shares=0, filled_shares=0, reason="NO_NEXT_SESSION",
+            ))
+
+    # 回测结束仍未退出的 ExitEvent 显式留痕
+    for ei in pending_exits.values():
+        if ei.remaining_shares > 0:
+            deviations.append(TargetDeviation(
+                date=dates[-1] if dates else 0,
+                symbol=ei.symbol,
+                target_weight=0.0,
+                target_shares=ei.remaining_shares,
+                filled_shares=0,
+                reason=f"PENDING_EXIT_{ei.reason}_INCOMPLETE",
             ))
 
     # 从实际成交事件流构建交易生命周期与分配关系

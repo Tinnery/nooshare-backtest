@@ -46,6 +46,7 @@ def build_trades(
     fills 必须已按 (date, 卖出先于买入) 的执行顺序排列——引擎保证该顺序。
     orders 可选：提供时从 BUY Order 提取 signal_id 写入 initial_signal_id，
     从 SELL Order 提取 decision_reason 写入 exit_reason。
+    若 Fill 已携带 trade_id（引擎早期建立），则直接复用，不重新生成。
     """
     trades: list[Trade] = []
     allocations: list[TradeFillAllocation] = []
@@ -62,8 +63,12 @@ def build_trades(
         t = open_trades.get(fill.symbol)
         if fill.side == "BUY":
             if t is None:
-                tid = event_id(run_id, "trade", fill.symbol, trade_seq)
-                trade_seq += 1
+                # 优先使用 Fill 已携带的 trade_id（引擎早期建立）
+                if fill.trade_id:
+                    tid = fill.trade_id
+                else:
+                    tid = event_id(run_id, "trade", fill.symbol, trade_seq)
+                    trade_seq += 1
                 # 从 BUY Order 提取 signal_id 作为 initial_signal_id
                 init_sig = ""
                 if fill.order_id and fill.order_id in order_map:
@@ -84,8 +89,11 @@ def build_trades(
         else:  # SELL
             if t is None or t.shares <= 0:
                 # 事件关联不完整：无法确认生命周期，记录 UNRESOLVED 而不是丢弃证据。
-                tid = event_id(run_id, "trade", fill.symbol, trade_seq)
-                trade_seq += 1
+                if fill.trade_id:
+                    tid = fill.trade_id
+                else:
+                    tid = event_id(run_id, "trade", fill.symbol, trade_seq)
+                    trade_seq += 1
                 t = _OpenTrade(
                     trade_id=tid, symbol=fill.symbol,
                     canonical_id=fill.canonical_id, exchange=fill.exchange,
