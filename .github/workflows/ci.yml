@@ -37,7 +37,10 @@ jobs:
       - name: Install package and test dependencies
         run: python -m pip install -e ".[dev]"
       - name: Run tests
-        run: python -m pytest -q
+        # Cross-repo RunPackage tests require a sibling private nooshare checkout.
+        # They run in Workspace integration; this public-repo job validates the
+        # engine's self-contained unit/parity suite.
+        run: python -m pytest -q --ignore=tests/integration/test_cross_repo_integration.py
 
 
   pro_infrastructure_tunnel:
