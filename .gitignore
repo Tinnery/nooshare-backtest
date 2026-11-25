@@ -70,3 +70,4 @@ out/
 cache/
 *.pkl
 *.pickle
+uv.lock
