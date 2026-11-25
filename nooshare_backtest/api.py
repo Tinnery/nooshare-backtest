@@ -4,7 +4,8 @@
 """
 from __future__ import annotations
 
-from typing import Any, Iterable, Mapping
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any, Iterable, Mapping
 
 from .adapters.market_data import normalize_bars
 from .adapters.strategy import normalize_targets
@@ -14,10 +15,13 @@ from .execution import ExecutionConfig
 from .models import BacktestResult, Bar, TargetPortfolio
 from .rules import RuleSet
 
+if TYPE_CHECKING:
+    from .engine import DecisionContext
+
 
 def run_backtest(
     bars: Mapping[int, Any] | Iterable[Bar] | Iterable[Mapping[str, Any]],
-    decisions: Mapping[int, Any] | Iterable[Any],
+    decisions: Mapping[int, Any] | Iterable[Any] | Callable[["DecisionContext"], Any],
     *,
     initial_cash: float = 1_000_000.0,
     run_id: str = "run",
@@ -30,11 +34,12 @@ def run_backtest(
     """运行一次回测。
 
     bars 可以是 {date: {symbol: Bar}}、Bar 列表或记录列表；
-    decisions 可以是 {decision_date: TargetPortfolio} 或目标组合列表/字典列表。
+    decisions 可以是 {decision_date: TargetPortfolio}、目标组合列表/字典列表，
+    或决策回调 Callable[DecisionContext, TargetPortfolio | None]（回调直接透传给内核）。
     两者都由 adapters 归一化后交给唯一的 Canonical Engine。
     """
     normalized_bars = normalize_bars(bars)
-    normalized_targets = normalize_targets(decisions)
+    normalized_targets = decisions if callable(decisions) else normalize_targets(decisions)
     config = EngineConfig(
         initial_cash=initial_cash,
         run_id=run_id,

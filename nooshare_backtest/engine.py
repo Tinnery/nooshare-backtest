@@ -8,6 +8,7 @@
 """
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Mapping
 
@@ -19,6 +20,7 @@ from .models import (
     BacktestResult,
     Bar,
     CostSummary,
+    PositionView,
     RunMetadata,
     TargetDeviation,
     TargetPortfolio,
@@ -27,7 +29,26 @@ from .rules import RuleSet
 from .trades import build_trades
 
 FILL_POLICY = "T+1 next-session open; daily OHLC simulated fills; no intraday queue reconstruction"
-ENGINE_VERSION = "0.2.0"
+ENGINE_VERSION = "0.3.0"
+
+# 决策日 -> 目标组合；或逐日决策回调（收盘后调用，返回 None 表示当日无决策）。
+# 回调收到的持仓/权益是引擎的真实状态，策略据此表达路径依赖规则（如止盈止损），
+# 决策语义仍完全留在策略侧，引擎不判断任何策略规则。
+TargetsInput = Mapping[int, TargetPortfolio] | Callable[["DecisionContext"], "TargetPortfolio | None"]
+
+
+@dataclass(frozen=True)
+class DecisionContext:
+    """收盘决策时点交给策略的引擎真实状态。
+
+    date 为收盘决策日；positions 为 T+1 口径下的持仓视图
+    （first_entry_date/first_entry_price 可用于路径依赖退出规则的建仓基准）。
+    """
+    date: int
+    bars: Mapping[str, Bar]
+    positions: tuple[PositionView, ...]
+    cash: float
+    total_asset: float
 
 
 @dataclass(frozen=True)
@@ -43,13 +64,14 @@ class EngineConfig:
 
 def run(
     bars_by_date: Mapping[int, Mapping[str, Bar]],
-    targets: Mapping[int, TargetPortfolio],
+    targets: TargetsInput,
     config: EngineConfig | None = None,
 ) -> BacktestResult:
     """执行一次回测。
 
     bars_by_date: 交易日 -> {symbol: Bar}
-    targets: 决策日 -> TargetPortfolio（只能是 bars_by_date 中某个交易日收盘后形成）
+    targets: 决策日 -> TargetPortfolio（只能是 bars_by_date 中某个交易日收盘后形成），
+             或决策回调 Callable[DecisionContext, TargetPortfolio | None]。
     最后一天的决策因没有下一交易日，记为 NO_NEXT_SESSION 差异，不会静默丢弃。
     """
     cfg = config or EngineConfig()
@@ -93,7 +115,17 @@ def run(
         last_total_asset = point.total_asset
 
         # 3) 收盘后接收当日决策，留待下一交易日执行
-        pending = targets.get(date)
+        if callable(targets):
+            ctx = DecisionContext(
+                date=date,
+                bars=day_bars,
+                positions=tuple(portfolio.position_views(date)),
+                cash=portfolio.cash,
+                total_asset=point.total_asset,
+            )
+            pending = targets(ctx)
+        else:
+            pending = targets.get(date)
 
     # 最后一日未执行的决策显式留痕
     if pending is not None and dates:

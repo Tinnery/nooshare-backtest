@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from .models import Bar, EquityPoint, Fill, LedgerEntry, PositionSnapshot
+from .models import Bar, EquityPoint, Fill, LedgerEntry, PositionSnapshot, PositionView
 
 
 @dataclass
@@ -21,6 +21,7 @@ class _Lot:
     shares: int
     cost_basis: float          # 该批次的含费用成本
     bought_date: int
+    pure_price: float = 0.0    # 该批次不含费用的买入成交价
 
 
 @dataclass
@@ -82,7 +83,8 @@ class Portfolio:
             pos.cost_basis += paid
             pos.shares += fill.shares
             # 每笔买入形成独立批次，保留真实买入日
-            pos.lots.append(_Lot(shares=fill.shares, cost_basis=paid, bought_date=fill.date))
+            pos.lots.append(_Lot(shares=fill.shares, cost_basis=paid, bought_date=fill.date,
+                                 pure_price=fill.price))
         else:  # SELL
             pos = self.positions[fill.symbol]
             pos.consume(fill.shares)
@@ -109,6 +111,24 @@ class Portfolio:
     def shares_of(self, symbol: str) -> int:
         pos = self.positions.get(symbol)
         return pos.shares if pos else 0
+
+    def position_views(self, date: int) -> list[PositionView]:
+        """产出决策回调用的持仓视图（存活最早批次 + T+1 可卖数）。
+
+        lots 由 FIFO 消费保持按买入日有序，首个批次即存活最早批次。
+        """
+        views: list[PositionView] = []
+        for symbol, pos in sorted(self.positions.items()):
+            first = pos.lots[0] if pos.lots else None
+            views.append(PositionView(
+                symbol=symbol,
+                shares=pos.shares,
+                avg_cost=pos.avg_cost,
+                first_entry_price=first.pure_price if first else pos.avg_cost,
+                first_entry_date=first.bought_date if first else date,
+                sellable_shares=self.sellable_shares(symbol, date),
+            ))
+        return views
 
     def mark(self, date: int, bars: dict[str, Bar], initial_cash: float) -> tuple[EquityPoint, list[PositionSnapshot]]:
         """按收盘价盯市，产出权益点与持仓快照。缺失行情按最近成本估值。"""

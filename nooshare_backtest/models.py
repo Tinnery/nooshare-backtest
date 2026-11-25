@@ -216,6 +216,22 @@ class PositionSnapshot:
 
 
 @dataclass(frozen=True)
+class PositionView:
+    """决策回调用的持仓视图。
+
+    first_entry_price / first_entry_date 取自当前存活批次中最早批次的
+    不含费用买入价与买入日，供路径依赖退出规则（止盈止损）以建仓价为基准。
+    分批加仓不改基准；建仓批次全部卖出后以剩余最早批次为准。
+    """
+    symbol: str
+    shares: int
+    avg_cost: float           # 含费用移动加权成本
+    first_entry_price: float  # 存活最早批次不含费用买入价
+    first_entry_date: int     # 该批次买入日（YYYYMMDD）
+    sellable_shares: int      # T+1 规则下的当日可卖股数
+
+
+@dataclass(frozen=True)
 class EquityPoint:
     """某交易日收盘的组合权益。"""
     date: int
