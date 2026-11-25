@@ -27,3 +27,7 @@
 - 所有回测必须走 `nooshare_backtest.engine.run` 唯一内核；新增行为先加可手算的 Fixture 测试。
 - 结果必须可复现、可序列化；模拟成交假设随结果和报告一起输出。
 - 不提交凭据、密钥或含敏感数据的样例。
+
+## 主机约束
+
+本仓库只在 pro 主机开发和运行。禁止 clone 到 Windows 主机（travis-hp）。如果在 Windows 主机上发现本仓库的 checkout，应删除该 checkout 并修正来源（不正确的 clone 操作或 workspace 配置）。
