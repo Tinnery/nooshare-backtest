@@ -1,6 +1,10 @@
-"""组合账本：现金、持仓、成交落账、盯市与净值。
+"""组合账本：现金、持仓批次、成交落账、盯市与净值。
 
-持仓成本采用移动加权平均（含买入费用）。买入当日标记 bought_date 以支持 T+1。
+持仓成本采用移动加权平均（含买入费用），与 Strategy 基线一致。
+T+1 按「买入批次」判断：每笔买入形成独立 lot，含 bought_date 与成本；
+卖出只用已过 T+1 的批次，禁止用「最近一次买入日期」代表全部持仓
+（那会错误锁住更早批次，或错误放行当天买入批次）。
+
 账本只记录「实际成交」造成的资金/持仓变化；未成交的目标不进入账本，
 只在 TargetDeviation 中体现。
 """
@@ -12,14 +16,51 @@ from .models import Bar, EquityPoint, Fill, LedgerEntry, PositionSnapshot
 
 
 @dataclass
+class _Lot:
+    """一个买入批次：同一证券同一买入日的持仓块。"""
+    shares: int
+    cost_basis: float          # 该批次的含费用成本
+    bought_date: int
+
+
+@dataclass
 class _Position:
     shares: int
     cost_basis: float          # 持仓总成本（含买入费用）
-    bought_date: int           # 最近一次买入日，用于 T+1
+    lots: list[_Lot] = field(default_factory=list)
 
     @property
     def avg_cost(self) -> float:
         return self.cost_basis / self.shares if self.shares else 0.0
+
+    def sellable_shares(self, date: int, enable_t_plus_1: bool) -> int:
+        """T+1 可卖股数：按批次买入日判断，不用单一 bought_date。"""
+        if not enable_t_plus_1:
+            return self.shares
+        return sum(lot.shares for lot in self.lots if lot.bought_date < date)
+
+    def consume(self, shares: int) -> float:
+        """按 FIFO 批次消耗持仓，返回被消耗批次的成本（移动加权口径由 cost_basis 决定）。
+
+        批次只用于 T+1 判定与数量扣减；成本按移动加权平均扣减以与基线一致。
+        """
+        avg = self.avg_cost
+        removed_cost = avg * shares
+        self.cost_basis -= removed_cost
+        self.shares -= shares
+        left = shares
+        for lot in self.lots:
+            if left <= 0:
+                break
+            take = min(lot.shares, left)
+            lot.shares -= take
+            left -= take
+        self.lots = [lot for lot in self.lots if lot.shares > 0]
+        if self.shares <= 0:
+            self.shares = 0
+            self.cost_basis = 0.0
+            self.lots = []
+        return removed_cost
 
 
 @dataclass
@@ -27,28 +68,25 @@ class Portfolio:
     cash: float
     positions: dict[str, _Position] = field(default_factory=dict)
     ledger: list[LedgerEntry] = field(default_factory=list)
+    enable_t_plus_1: bool = True
 
     def apply_fill(self, fill: Fill) -> None:
-        """把一笔成交落入现金与持仓，并写账本。"""
+        """把一笔成交落入现金与持仓批次，并写账本。"""
         self.cash += fill.net_cash
         if fill.side == "BUY":
             pos = self.positions.get(fill.symbol)
             if pos is None:
-                pos = _Position(shares=0, cost_basis=0.0, bought_date=fill.date)
+                pos = _Position(shares=0, cost_basis=0.0)
                 self.positions[fill.symbol] = pos
-            # 买入付现 = 毛额 + 费用 = -(net_cash)
-            paid = -fill.net_cash
+            paid = -fill.net_cash           # 含费用
             pos.cost_basis += paid
             pos.shares += fill.shares
-            pos.bought_date = fill.date
+            # 每笔买入形成独立批次，保留真实买入日
+            pos.lots.append(_Lot(shares=fill.shares, cost_basis=paid, bought_date=fill.date))
         else:  # SELL
             pos = self.positions[fill.symbol]
-            avg = pos.avg_cost
-            pos.cost_basis -= avg * fill.shares
-            pos.shares -= fill.shares
-            if pos.shares <= 0:
-                pos.shares = 0
-                pos.cost_basis = 0.0
+            pos.consume(fill.shares)
+            if pos.shares == 0:
                 del self.positions[fill.symbol]
         self.ledger.append(LedgerEntry(
             date=fill.date,
@@ -59,9 +97,14 @@ class Portfolio:
             note=f"px={fill.price}",
         ))
 
-    def bought_today(self, symbol: str, date: int) -> bool:
+    def sellable_shares(self, symbol: str, date: int) -> int:
         pos = self.positions.get(symbol)
-        return bool(pos and pos.bought_date == date)
+        return pos.sellable_shares(date, self.enable_t_plus_1) if pos else 0
+
+    def bought_today(self, symbol: str, date: int) -> bool:
+        """兼容旧调用：当天是否有买入批次。新逻辑请用 sellable_shares。"""
+        pos = self.positions.get(symbol)
+        return bool(pos and any(lot.bought_date == date for lot in pos.lots))
 
     def shares_of(self, symbol: str) -> int:
         pos = self.positions.get(symbol)

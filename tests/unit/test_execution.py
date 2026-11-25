@@ -43,7 +43,10 @@ class TestExecution(unittest.TestCase):
         self.assertEqual(len(fills), 1)
         self.assertEqual(fills[0].shares % 100, 0)
         self.assertLess(fills[0].shares, 5_000)
-        self.assertEqual(final[0].status, "FILLED")
+        self.assertEqual(final[0].status, "PARTIALLY_FILLED")
+        self.assertEqual(final[0].requested_shares, 5_000)
+        self.assertEqual(final[0].filled_shares, fills[0].shares)
+        self.assertLess(final[0].filled_shares, final[0].requested_shares)
         self.assertEqual(devs[0].reason, "INSUFFICIENT_CASH")
         self.assertGreaterEqual(p.cash, 0.0)
 

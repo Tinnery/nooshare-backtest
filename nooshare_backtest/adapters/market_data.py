@@ -36,6 +36,8 @@ def normalize_bars(source: Mapping[int, Any] | Iterable[Any]) -> dict[int, dict[
             is_limit_up=bool(item.get("is_limit_up", False)),
             is_limit_down=bool(item.get("is_limit_down", False)),
             is_st=bool(item.get("is_st", False)),
+            canonical_id=str(item.get("canonical_id", "")),
+            exchange=str(item.get("exchange", "")),
         )
         out.setdefault(bar.date, {})[bar.symbol] = bar
     return out

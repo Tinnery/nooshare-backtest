@@ -24,8 +24,10 @@ from .models import (
     TargetPortfolio,
 )
 from .rules import RuleSet
+from .trades import build_trades
 
 FILL_POLICY = "T+1 next-session open; daily OHLC simulated fills; no intraday queue reconstruction"
+ENGINE_VERSION = "0.2.0"
 
 
 @dataclass(frozen=True)
@@ -52,7 +54,7 @@ def run(
     """
     cfg = config or EngineConfig()
     dates = sorted(bars_by_date)
-    portfolio = Portfolio(cash=cfg.initial_cash)
+    portfolio = Portfolio(cash=cfg.initial_cash, enable_t_plus_1=cfg.rules.enable_t_plus_1)
     pending: TargetPortfolio | None = None
     last_total_asset = cfg.initial_cash
 
@@ -60,7 +62,6 @@ def run(
     positions: list = []
     orders: list = []
     fills: list = []
-    ledger: list = []
     deviations: list = []
     cost_total = CostSummary()
 
@@ -70,7 +71,7 @@ def run(
         # 1) 先执行上一交易日的决策（T -> T+1），使用上一收盘的总资产定目标股数
         if pending is not None:
             planned = plan_orders(pending, portfolio, day_bars, last_total_asset,
-                                  cfg.execution, exec_date=date)
+                                  cfg.execution, exec_date=date, run_id=cfg.run_id)
             day_fills, day_orders, day_devs = execute_orders(
                 planned, portfolio, day_bars, date, cfg.rules, cfg.cost_model, cfg.execution
             )
@@ -102,10 +103,13 @@ def run(
                 target_shares=0, filled_shares=0, reason="NO_NEXT_SESSION",
             ))
 
+    # 从实际成交事件流构建交易生命周期与分配关系
+    trades, allocations = build_trades(fills, dates, run_id=cfg.run_id)
+
     ledger = list(portfolio.ledger)
     metadata = RunMetadata(
         run_id=cfg.run_id,
-        engine_version="0.1.0",
+        engine_version=ENGINE_VERSION,
         config={
             "initial_cash": cfg.initial_cash,
             "lot": cfg.execution.lot,
@@ -123,14 +127,18 @@ def run(
         data_version=cfg.data_version,
         fill_policy=FILL_POLICY,
     )
+    metrics = compute_metrics(equity_curve, fills, cfg.initial_cash)
+    metrics["trade_count"] = float(len(trades))  # 交易生命周期数，不是 Fill 数
     return BacktestResult(
         metadata=metadata,
         equity_curve=equity_curve,
         positions=positions,
         orders=orders,
         fills=fills,
+        trades=trades,
+        trade_fill_allocations=allocations,
         ledger=ledger,
         costs=cost_total,
-        metrics=compute_metrics(equity_curve, fills, cfg.initial_cash),
+        metrics=metrics,
         deviations=deviations,
     )

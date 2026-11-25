@@ -25,6 +25,7 @@ def normalize_targets(source: Mapping[int, Any] | Iterable[Any]) -> dict[int, Ta
                 out[d] = TargetPortfolio(
                     decision_date=d, weights=dict(item["weights"]),
                     version=str(item.get("version", "unknown")),
+                    signal_ids=dict(item.get("signal_ids", {})),
                 )
             else:
                 out[d] = TargetPortfolio(decision_date=d, weights=dict(item))
@@ -38,6 +39,7 @@ def normalize_targets(source: Mapping[int, Any] | Iterable[Any]) -> dict[int, Ta
             out[d] = TargetPortfolio(
                 decision_date=d, weights=dict(item["weights"]),
                 version=str(item.get("version", "unknown")),
+                signal_ids=dict(item.get("signal_ids", {})),
             )
     return out
 

@@ -6,7 +6,9 @@
 3. 逐单经交易规则判定，可成交则按成本模型模拟成交，否则记录拒绝原因；
 4. 买入受可用现金约束，现金不足则部分成交，差额记入 TargetDeviation。
 
-所有未完全执行的目标都会产生 TargetDeviation，保证「目标≠成交」可查询、可解释。
+订单与成交都携带稳定身份：order_id 由 target.decision_date 与序号确定性生成；
+fill_id 由 order_id 与序号生成。信号引用（signal_id）从 TargetPortfolio 透传，
+执行层不生成也不判断信号。部分成交状态必须诚实表达（PARTIALLY_FILLED）。
 """
 from __future__ import annotations
 
@@ -14,10 +16,16 @@ from dataclasses import dataclass
 
 from .accounting import Portfolio
 from .costs import CostModel
-from .models import Bar, Fill, Order, TargetDeviation, TargetPortfolio
+from .models import Bar, Fill, Order, TargetDeviation, TargetPortfolio, event_id
 from .rules import RuleSet
 
 LOT = 100
+
+ORDER_PENDING = "PENDING"
+ORDER_PARTIAL = "PARTIALLY_FILLED"
+ORDER_FILLED = "FILLED"
+ORDER_REJECTED = "REJECTED"
+ORDER_SKIPPED = "SKIPPED"
 
 
 @dataclass(frozen=True)
@@ -32,6 +40,12 @@ def _round_shares(shares: float, cfg: ExecutionConfig) -> int:
     return max(0, int(shares // cfg.lot) * cfg.lot)
 
 
+def _identity(target: TargetPortfolio, symbol: str) -> tuple[str, str]:
+    if target.decision_date and symbol in target.signal_ids:
+        return event_id(target.decision_date, "decision", symbol), target.signal_ids[symbol]
+    return "", ""
+
+
 def plan_orders(
     target: TargetPortfolio,
     portfolio: Portfolio,
@@ -39,6 +53,7 @@ def plan_orders(
     total_asset: float,
     cfg: ExecutionConfig,
     exec_date: int | None = None,
+    run_id: str = "run",
 ) -> list[Order]:
     """按目标权重生成订单。以执行日开盘价估算目标股数。
 
@@ -48,7 +63,7 @@ def plan_orders(
     orders: list[Order] = []
     # 目标组合中未列出的持仓视为目标权重 0，需要卖出；不能只遍历 weights 键。
     symbols = sorted(set(target.weights) | set(portfolio.positions))
-    for symbol in symbols:
+    for idx, symbol in enumerate(symbols):
         weight = target.weights.get(symbol, 0.0)
         bar = bars.get(symbol)
         px = bar.open if bar and bar.open > 0 else 0.0
@@ -56,13 +71,50 @@ def plan_orders(
         want = _round_shares(target_value / px, cfg) if px > 0 else 0
         have = portfolio.shares_of(symbol)
         delta = want - have
-        if delta > 0:
-            orders.append(Order(date, symbol, "BUY", delta, weight))
-        elif delta < 0:
-            orders.append(Order(date, symbol, "SELL", -delta, weight))
-    # 先卖后买，释放现金供买入
+        if delta == 0:
+            continue
+        side = "BUY" if delta > 0 else "SELL"
+        decision_id, signal_id = _identity(target, symbol)
+        oid = event_id(run_id, "order", date, idx)
+        orders.append(Order(
+            date=date, symbol=symbol, side=side,
+            requested_shares=abs(delta), target_weight=weight,
+            order_id=oid, signal_id=signal_id,
+            decision_date=target.decision_date,
+            canonical_id=bar.canonical_id if bar else "",
+            exchange=bar.exchange if bar else "",
+        ))
+    # 先卖后买，释放现金供买入；order_id 已确定，顺序稳定可复现。
     orders.sort(key=lambda o: (o.side != "SELL", o.symbol))
     return orders
+
+
+def _order_with_final(
+    order: Order, *, status: str, filled: int, reason: str = "",
+) -> Order:
+    return Order(
+        date=order.date, symbol=order.symbol, side=order.side,
+        requested_shares=order.requested_shares, target_weight=order.target_weight,
+        status=status, reason=reason,
+        order_id=order.order_id, signal_id=order.signal_id,
+        decision_date=order.decision_date,
+        canonical_id=order.canonical_id, exchange=order.exchange,
+        filled_shares=filled,
+    )
+
+
+def _fill(
+    order: Order, bd: dict[str, float], date: int, seq: int, shares: int,
+) -> Fill:
+    return Fill(
+        date=date, symbol=order.symbol, side=order.side, shares=shares,
+        price=bd["price"], commission=bd["commission"],
+        stamp_duty=bd["stamp_duty"], transfer_fee=bd["transfer_fee"],
+        slippage=bd["slippage"],
+        fill_id=event_id(order.order_id or "run", "fill", date, seq),
+        order_id=order.order_id,
+        canonical_id=order.canonical_id, exchange=order.exchange,
+    )
 
 
 def execute_orders(
@@ -80,62 +132,59 @@ def execute_orders(
     deviations: list[TargetDeviation] = []
 
     # 先处理卖出
-    for order in [o for o in orders if o.side == "SELL"]:
+    for seq, order in enumerate([o for o in orders if o.side == "SELL"]):
         bar = bars.get(order.symbol)
-        reason = rules.can_sell(bar, portfolio.bought_today(order.symbol, date))
-        shares = min(order.shares, portfolio.shares_of(order.symbol))
+        reason = rules.can_sell(bar, not bool(portfolio.sellable_shares(order.symbol, date)))
+        sellable = portfolio.sellable_shares(order.symbol, date)
+        shares = min(order.requested_shares, portfolio.shares_of(order.symbol), sellable)
         if reason:
-            final_orders.append(Order(date, order.symbol, order.side, order.shares,
-                                      order.target_weight, "REJECTED", reason))
+            final_orders.append(_order_with_final(order, status=ORDER_REJECTED, filled=0, reason=reason))
             deviations.append(TargetDeviation(date, order.symbol, order.target_weight,
-                                              order.shares, 0, reason))
+                                              order.requested_shares, 0, reason))
             continue
         if shares <= 0:
-            final_orders.append(Order(date, order.symbol, order.side, order.shares,
-                                      order.target_weight, "SKIPPED", "NO_POSITION"))
+            block = "T_PLUS_1" if portfolio.shares_of(order.symbol) > 0 else "NO_POSITION"
+            final_orders.append(_order_with_final(order, status=ORDER_SKIPPED, filled=0, reason=block))
             continue
         bd = costs.breakdown(bar.open, shares, "SELL")
-        fill = Fill(date, order.symbol, "SELL", shares, bd["price"],
-                    bd["commission"], bd["stamp_duty"], bd["transfer_fee"], bd["slippage"])
+        fill = _fill(order, bd, date, seq, shares)
         portfolio.apply_fill(fill)
         fills.append(fill)
-        final_orders.append(Order(date, order.symbol, order.side, shares,
-                                  order.target_weight, "FILLED"))
-        if shares < order.shares:
+        status = ORDER_FILLED if shares == order.requested_shares else ORDER_PARTIAL
+        final_orders.append(_order_with_final(order, status=status, filled=shares))
+        if shares < order.requested_shares:
             deviations.append(TargetDeviation(date, order.symbol, order.target_weight,
-                                              order.shares, shares, "PARTIAL_SELL"))
+                                              order.requested_shares, shares,
+                                              "T_PLUS_1" if sellable < order.requested_shares else "PARTIAL_SELL"))
 
     # 再处理买入（受现金约束）
-    for order in [o for o in orders if o.side == "BUY"]:
+    for seq, order in enumerate([o for o in orders if o.side == "BUY"]):
         bar = bars.get(order.symbol)
         reason = rules.can_buy(bar)
         if reason:
-            final_orders.append(Order(date, order.symbol, order.side, order.shares,
-                                      order.target_weight, "REJECTED", reason))
+            final_orders.append(_order_with_final(order, status=ORDER_REJECTED, filled=0, reason=reason))
             deviations.append(TargetDeviation(date, order.symbol, order.target_weight,
-                                              order.shares, 0, reason))
+                                              order.requested_shares, 0, reason))
             continue
-        # 用等效买入价计算可负担股数
         eff_px = costs.buy_price(bar.open)
         affordable = int(portfolio.cash // (eff_px * cfg.lot)) * cfg.lot if cfg.lot else int(portfolio.cash // eff_px)
         if not cfg.allow_fractional:
             affordable = max(0, affordable)
-        shares = min(order.shares, affordable)
+        shares = min(order.requested_shares, affordable)
         if shares <= 0:
-            final_orders.append(Order(date, order.symbol, order.side, order.shares,
-                                      order.target_weight, "REJECTED", "INSUFFICIENT_CASH"))
+            final_orders.append(_order_with_final(order, status=ORDER_REJECTED, filled=0,
+                                                  reason="INSUFFICIENT_CASH"))
             deviations.append(TargetDeviation(date, order.symbol, order.target_weight,
-                                              order.shares, 0, "INSUFFICIENT_CASH"))
+                                              order.requested_shares, 0, "INSUFFICIENT_CASH"))
             continue
         bd = costs.breakdown(bar.open, shares, "BUY")
-        fill = Fill(date, order.symbol, "BUY", shares, bd["price"],
-                    bd["commission"], bd["stamp_duty"], bd["transfer_fee"], bd["slippage"])
+        fill = _fill(order, bd, date, 1000 + seq, shares)
         portfolio.apply_fill(fill)
         fills.append(fill)
-        final_orders.append(Order(date, order.symbol, order.side, shares,
-                                  order.target_weight, "FILLED"))
-        if shares < order.shares:
+        status = ORDER_FILLED if shares == order.requested_shares else ORDER_PARTIAL
+        final_orders.append(_order_with_final(order, status=status, filled=shares))
+        if shares < order.requested_shares:
             deviations.append(TargetDeviation(date, order.symbol, order.target_weight,
-                                              order.shares, shares, "INSUFFICIENT_CASH"))
+                                              order.requested_shares, shares, "INSUFFICIENT_CASH"))
 
     return fills, final_orders, deviations

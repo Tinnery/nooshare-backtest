@@ -1,12 +1,42 @@
 """回测领域数据结构。
 
-目标仓位、订单、成交、实际持仓是不同对象，不可混用（见 Design: backtest-implementation）。
-所有对象均为不可变数据类，结果可序列化、可复核。
+目标仓位、订单、成交、实际持仓、交易生命周期是不同对象，不可混用
+（见 Design: backtest-implementation）。所有对象均为不可变数据类，
+结果可序列化、可复核。
+
+V0.2：加入稳定事件身份（Order/Fill/Trade）、TradeFillAllocation 与 Schema Version。
+事件 ID 由 run_id + 确定性序号经 UUID5 生成：不依赖随机数/当前时间，
+相同输入与 run_id 重复执行结果一致；不同 run 身份不冲突。
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from typing import Any
+import uuid
+
+# 固定命名空间：仅用于把回测事件映射为稳定 UUID，不对外暴露为密钥。
+EVENT_NAMESPACE = uuid.UUID("6f8d1b3a-2c47-5e91-9a04-7b3d6e2f18c5")
+
+SCHEMA_VERSION = 2
+LEGACY_SCHEMA_VERSION = 0  # 无事件身份的旧 JSON，不伪造历史关联
+
+
+def event_id(run_id: str, kind: str, *parts: Any) -> str:
+    """确定性生成事件 UUID（UUID5，namespace + run_id + kind + 序号）。"""
+    key = ":".join([str(run_id), kind, *[str(p) for p in parts]])
+    return str(uuid.uuid5(EVENT_NAMESPACE, key))
+
+
+def _coerce(cls, data: dict[str, Any], renames: dict[str, str] | None = None):
+    """从 dict 还原 dataclass，兼容旧字段名；忽略无法识别的键而不静默丢关键关联。"""
+    renames = renames or {}
+    allowed = {f.name for f in fields(cls)}
+    kwargs = {}
+    for k, v in data.items():
+        key = renames.get(k, k)
+        if key in allowed:
+            kwargs[key] = v
+    return cls(**kwargs)
 
 
 # ---------- 输入：市场数据 ----------
@@ -17,6 +47,7 @@ class Bar:
 
     is_suspended / is_limit_up / is_limit_down / is_st 为当日交易状态，
     用于 A 股交易规则判定。ret 为当日后复权收益（可选）。
+    canonical_id / exchange 有身份信息时保留，禁止由代码前缀推断。
     """
     date: int                 # YYYYMMDD
     symbol: str
@@ -30,6 +61,8 @@ class Bar:
     is_limit_up: bool = False
     is_limit_down: bool = False
     is_st: bool = False
+    canonical_id: str = ""
+    exchange: str = ""
 
 
 # ---------- 输入：策略决策 ----------
@@ -39,30 +72,54 @@ class TargetPortfolio:
     """策略在 decision_date 收盘后给出的目标组合。
 
     weights: symbol -> 目标权重（0..1，允许所有权重之和 <= 1，剩余为现金）。
-    引擎在下一个交易日按规则执行，不假设 decision_date 当日成交。
+    signal_ids: symbol -> 原始 signal_id（可选）。无法唯一关联时留空，
+    引擎不猜测信号。引擎在下一交易日按规则执行，不假设 decision_date 当日成交。
     """
     decision_date: int
     weights: dict[str, float]
     version: str = "unknown"
+    signal_ids: dict[str, str] = field(default_factory=dict)
 
 
 # ---------- 订单与成交 ----------
 
 @dataclass(frozen=True)
 class Order:
-    """由目标仓位推导的订单。status 取值见 ORDER_* 常量。"""
+    """由目标仓位推导的订单。status 取值见 ORDER_* 常量。
+
+    requested_shares 为意图，filled_shares 为实际成交；二者独立查询。
+    部分成交必须标记 PARTIALLY_FILLED，不得标记 FILLED。
+    """
     date: int                 # 执行日（decision_date 的下一交易日）
     symbol: str
     side: str                 # BUY / SELL
-    shares: int
+    requested_shares: int
     target_weight: float
     status: str = "PENDING"
-    reason: str = ""          # 未成交/拒绝原因
+    reason: str = ""
+    order_id: str = ""
+    signal_id: str = ""
+    decision_date: int = 0
+    canonical_id: str = ""
+    exchange: str = ""
+    filled_shares: int = 0
+
+    @property
+    def shares(self) -> int:
+        """兼容旧调用：shares 指请求的股数。实际成交请用 filled_shares。"""
+        return self.requested_shares
+
+    @property
+    def fully_filled(self) -> bool:
+        return self.filled_shares == self.requested_shares and self.filled_shares > 0
 
 
 @dataclass(frozen=True)
 class Fill:
-    """实际成交。价格与费用拆分记录，可逐笔复核。"""
+    """实际成交。价格与费用拆分记录，可逐笔复核。
+
+    每条 Fill 必须归属唯一 order_id；没有实际成交不创建 Fill。
+    """
     date: int
     symbol: str
     side: str
@@ -72,6 +129,10 @@ class Fill:
     stamp_duty: float
     transfer_fee: float
     slippage: float
+    fill_id: str = ""
+    order_id: str = ""
+    canonical_id: str = ""
+    exchange: str = ""
 
     @property
     def total_cost(self) -> float:
@@ -83,6 +144,51 @@ class Fill:
         gross = self.price * self.shares
         fee = self.commission + self.stamp_duty + self.transfer_fee
         return -gross - fee if self.side == "BUY" else gross - fee
+
+
+# ---------- 交易生命周期 ----------
+
+@dataclass(frozen=True)
+class TradeFillAllocation:
+    """一笔成交如何进入/退出一段持仓生命周期。
+
+    ENTRY：买入成交分配；EXIT：卖出成交分配。
+    一个 Fill 的分配数量不得超过其实际成交数量。
+    """
+    trade_id: str
+    fill_id: str
+    allocation_role: str      # ENTRY / EXIT
+    allocated_qty: int
+
+
+@dataclass(frozen=True)
+class Trade:
+    """同一证券从无持仓到形成持仓，再到持仓完全归零的一段连续生命周期。
+
+    多次买入、多次卖出、部分成交都属于同一段 Trade；完全平仓后重新建仓产生新 Trade。
+    OPEN：回测结束仍有剩余持仓；UNRESOLVED：事件关联不完整，无法确认结果。
+    不得把 OPEN 伪装成 CLOSED，不得为使报表好看强制平仓。
+    """
+    trade_id: str
+    symbol: str
+    canonical_id: str = ""
+    exchange: str = ""
+    initial_signal_id: str = ""
+    opened_date: int = 0
+    closed_date: int | None = None
+    status: str = "OPEN"      # OPEN / CLOSED / UNRESOLVED
+    entry_qty: int = 0
+    exit_qty: int = 0
+    open_qty: int = 0
+    avg_entry_price: float = 0.0
+    avg_exit_price: float = 0.0
+    gross_pnl: float = 0.0
+    net_pnl: float = 0.0
+    gross_return: float = 0.0
+    net_return: float = 0.0
+    total_cost: float = 0.0
+    holding_days: int = 0
+    exit_reason: str = "OPEN"
 
 
 # ---------- 账本 ----------
@@ -157,21 +263,24 @@ class CostSummary:
 
 @dataclass
 class BacktestResult:
-    """一次回测的完整结果。八类结果 + 目标/实际差异。
+    """一次回测的完整结果。
 
-    equity_curve / positions / orders / fills / ledger / costs / metrics 分别对应
-    Design 中 BacktestResult 领域模型的 Equity/Positions/Orders/Fills/Ledger/Costs/Metrics；
-    metadata 为 Run Metadata；deviations 保留目标组合与实际组合差异。
+    Schema Version 2 在八类结果之上新增 Trades 与 Trade-Fill Allocations，
+    并给 Order/Fill 稳定身份。metadata 为 Run Metadata；
+    deviations 保留目标组合与实际组合差异。
     """
     metadata: RunMetadata
     equity_curve: list[EquityPoint] = field(default_factory=list)
     positions: list[PositionSnapshot] = field(default_factory=list)
     orders: list[Order] = field(default_factory=list)
     fills: list[Fill] = field(default_factory=list)
+    trades: list[Trade] = field(default_factory=list)
+    trade_fill_allocations: list[TradeFillAllocation] = field(default_factory=list)
     ledger: list[LedgerEntry] = field(default_factory=list)
     costs: CostSummary = field(default_factory=CostSummary)
     metrics: dict[str, float] = field(default_factory=dict)
     deviations: list[TargetDeviation] = field(default_factory=list)
+    schema_version: int = SCHEMA_VERSION
 
     def to_dict(self) -> dict[str, Any]:
         from dataclasses import asdict
@@ -179,22 +288,31 @@ class BacktestResult:
 
 
 def result_from_dict(data: dict[str, Any]) -> BacktestResult:
-    """从 to_dict()/JSON 还原结果，供 CLI 的 show/report 与跨语言消费使用。"""
+    """从 to_dict()/JSON 还原结果，供 CLI 与跨语言消费使用。
+
+    未知 Schema Version 明确报错；旧版（无版本、无事件身份）标记为版本 0，
+    不伪造 Order/Fill/Trade 的历史关联。
+    """
+    version = int(data.get("schema_version", LEGACY_SCHEMA_VERSION))
+    if version not in (LEGACY_SCHEMA_VERSION, SCHEMA_VERSION):
+        raise ValueError(
+            f"unsupported BacktestResult schema_version: {version}; supported: "
+            f"{LEGACY_SCHEMA_VERSION}, {SCHEMA_VERSION}"
+        )
     md = data["metadata"]
-    metadata = RunMetadata(
-        run_id=md["run_id"], engine_version=md["engine_version"],
-        config=md.get("config", {}), strategy_version=md.get("strategy_version", "unknown"),
-        data_version=md.get("data_version", "unknown"),
-        fill_policy=md.get("fill_policy", "T+1 next-open, daily-OHLC simulated"),
-    )
+    metadata = _coerce(RunMetadata, md)
     cost = data.get("costs", {})
     return BacktestResult(
         metadata=metadata,
-        equity_curve=[EquityPoint(**x) for x in data.get("equity_curve", [])],
-        positions=[PositionSnapshot(**x) for x in data.get("positions", [])],
-        orders=[Order(**x) for x in data.get("orders", [])],
-        fills=[Fill(**x) for x in data.get("fills", [])],
-        ledger=[LedgerEntry(**x) for x in data.get("ledger", [])],
+        equity_curve=[_coerce(EquityPoint, x) for x in data.get("equity_curve", [])],
+        positions=[_coerce(PositionSnapshot, x) for x in data.get("positions", [])],
+        orders=[_coerce(Order, x, {"shares": "requested_shares"}) for x in data.get("orders", [])],
+        fills=[_coerce(Fill, x) for x in data.get("fills", [])],
+        trades=[_coerce(Trade, x) for x in data.get("trades", [])],
+        trade_fill_allocations=[
+            _coerce(TradeFillAllocation, x) for x in data.get("trade_fill_allocations", [])
+        ],
+        ledger=[_coerce(LedgerEntry, x) for x in data.get("ledger", [])],
         costs=CostSummary(
             commission=cost.get("commission", 0.0),
             stamp_duty=cost.get("stamp_duty", 0.0),
@@ -202,5 +320,6 @@ def result_from_dict(data: dict[str, Any]) -> BacktestResult:
             slippage=cost.get("slippage", 0.0),
         ),
         metrics=dict(data.get("metrics", {})),
-        deviations=[TargetDeviation(**x) for x in data.get("deviations", [])],
+        deviations=[_coerce(TargetDeviation, x) for x in data.get("deviations", [])],
+        schema_version=version,
     )
