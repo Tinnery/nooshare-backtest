@@ -10,7 +10,7 @@ V0.2：加入稳定事件身份（Order/Fill/Trade）、TradeFillAllocation 与 
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field, fields
+from dataclasses import dataclass, field, fields, replace
 from typing import Any
 import uuid
 
@@ -24,6 +24,27 @@ LEGACY_SCHEMA_VERSION = 0  # 无事件身份的旧 JSON，不伪造历史关联
 def event_id(run_id: str, kind: str, *parts: Any) -> str:
     """确定性生成事件 UUID（UUID5，namespace + run_id + kind + 序号）。"""
     key = ":".join([str(run_id), kind, *[str(p) for p in parts]])
+    return str(uuid.uuid5(EVENT_NAMESPACE, key))
+
+
+def exit_event_id(
+    run_id: str,
+    trade_id: str,
+    decision_date: int,
+    reason: str,
+    reference_price: float,
+    stop_price: float = 0.0,
+    take_price: float = 0.0,
+) -> str:
+    """确定性生成 ExitEvent UUID（UUID5）。
+
+    同一回测中的同一 Trade、同一次退出触发，产生唯一稳定的 ExitEvent ID。
+    重试使用相同的 decision_date（首次触发日），因此 ID 不变。
+    """
+    key = ":".join([
+        str(run_id), "exit", str(trade_id), str(decision_date),
+        str(reason), str(reference_price), str(stop_price), str(take_price),
+    ])
     return str(uuid.uuid5(EVENT_NAMESPACE, key))
 
 
@@ -109,6 +130,7 @@ class Order:
     canonical_id: str = ""
     exchange: str = ""
     filled_shares: int = 0
+    trade_id: str = ""
     exit_event_id: str = ""
     decision_reason: str = ""
 
@@ -139,6 +161,7 @@ class Fill:
     slippage: float
     fill_id: str = ""
     order_id: str = ""
+    trade_id: str = ""
     canonical_id: str = ""
     exchange: str = ""
 
@@ -230,6 +253,9 @@ class PositionView:
     first_entry_price / first_entry_date 取自当前存活批次中最早批次的
     不含费用买入价与买入日，供路径依赖退出规则（止盈止损）以建仓价为基准。
     分批加仓不改基准；建仓批次全部卖出后以剩余最早批次为准。
+
+    trade_id: 首笔 BUY Fill 时建立的 Trade UUID4，供策略回调为退出事件写入。
+    pending_exit_event_id: 尚未完成的退出事件 ID（退出重试机制）。
     """
     symbol: str
     shares: int
@@ -237,6 +263,8 @@ class PositionView:
     first_entry_price: float  # 存活最早批次不含费用买入价
     first_entry_date: int     # 该批次买入日（YYYYMMDD）
     sellable_shares: int      # T+1 规则下的当日可卖股数
+    trade_id: str = ""
+    pending_exit_event_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -259,6 +287,22 @@ class TargetDeviation:
     target_shares: int
     filled_shares: int
     reason: str
+
+
+@dataclass(frozen=True)
+class ExitEvent:
+    """退出事件：策略对某 Trade 触发的退出决策。
+
+    首次触发时创建，重试时复用同一 ExitEvent（同一 exit_event_id）。
+    """
+    exit_event_id: str
+    trade_id: str
+    symbol: str
+    decision_date: int
+    reason: str               # STOP_LOSS / TAKE_PROFIT
+    reference_price: float = 0.0
+    stop_price: float = 0.0
+    take_price: float = 0.0
 
 
 # ---------- 结果 ----------
@@ -304,6 +348,7 @@ class BacktestResult:
     costs: CostSummary = field(default_factory=CostSummary)
     metrics: dict[str, float] = field(default_factory=dict)
     deviations: list[TargetDeviation] = field(default_factory=list)
+    exit_events: list[ExitEvent] = field(default_factory=list)
     schema_version: int = SCHEMA_VERSION
 
     def to_dict(self) -> dict[str, Any]:
@@ -345,5 +390,6 @@ def result_from_dict(data: dict[str, Any]) -> BacktestResult:
         ),
         metrics=dict(data.get("metrics", {})),
         deviations=[_coerce(TargetDeviation, x) for x in data.get("deviations", [])],
+        exit_events=[_coerce(ExitEvent, x) for x in data.get("exit_events", [])],
         schema_version=version,
     )

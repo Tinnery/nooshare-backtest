@@ -59,6 +59,11 @@ def plan_orders(
 
     exec_date 为实际执行日（T 日决策的下一交易日）；未传时兼容旧调用使用决策日。
     target.hold 中的持仓保持现状，不生成订单（不调仓、不清仓）。
+
+    trade_id 传递规则：
+    - 普通目标权重产生的 SELL：从 portfolio.get_trade_id(symbol) 获取
+    - 加仓 BUY（已有持仓）：从 portfolio.get_trade_id(symbol) 获取
+    - 首次 BUY（尚无持仓）：trade_id 为空
     """
     date = exec_date if exec_date is not None else target.decision_date
     orders: list[Order] = []
@@ -83,6 +88,10 @@ def plan_orders(
         # 退出事件透传：策略层为 SELL 给出的 exit_event_id 和 decision_reason
         exit_eid = target.exit_event_ids.get(symbol, "") if side == "SELL" else ""
         dec_reason = target.decision_reasons.get(symbol, "") if side == "SELL" else ""
+        # trade_id 传递：
+        # - SELL: 从 portfolio 获取现有持仓的 trade_id
+        # - BUY: 如果已有持仓（加仓），从 portfolio 获取；首次建仓则为空
+        trade_id = portfolio.get_trade_id(symbol) if (side == "SELL" or have > 0) else ""
         orders.append(Order(
             date=date, symbol=symbol, side=side,
             requested_shares=abs(delta), target_weight=weight,
@@ -90,6 +99,7 @@ def plan_orders(
             decision_date=target.decision_date,
             canonical_id=bar.canonical_id if bar else "",
             exchange=bar.exchange if bar else "",
+            trade_id=trade_id,
             exit_event_id=exit_eid, decision_reason=dec_reason,
         ))
     # 先卖后买，释放现金供买入；order_id 已确定，顺序稳定可复现。
@@ -108,6 +118,7 @@ def _order_with_final(
         decision_date=order.decision_date,
         canonical_id=order.canonical_id, exchange=order.exchange,
         filled_shares=filled,
+        trade_id=order.trade_id,
         exit_event_id=order.exit_event_id, decision_reason=order.decision_reason,
     )
 
@@ -122,6 +133,7 @@ def _fill(
         slippage=bd["slippage"],
         fill_id=event_id(order.order_id or "run", "fill", date, seq),
         order_id=order.order_id,
+        trade_id=order.trade_id,
         canonical_id=order.canonical_id, exchange=order.exchange,
     )
 
