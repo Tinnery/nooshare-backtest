@@ -18,6 +18,7 @@
 12. 回测结束时仍有 OPEN Trade
 13. 回测结束时退出意图尚未完成 → abandoned
 14. 不同 Run 的 trade_id / exit_event_id 不冲突
+15. 普通目标权重调仓 SELL 携带 trade_id，Trade 继承首笔 BUY Signal
 """
 from __future__ import annotations
 
@@ -549,6 +550,40 @@ class TestExitEventContracts(unittest.TestCase):
         # exit_event_id 不冲突
         self.assertFalse(ee_ids_a & ee_ids_b,
                          f"不同 run 的 exit_event_id 不应冲突: {ee_ids_a & ee_ids_b}")
+
+
+    # ------------------------------------------------------------------ #
+    # 契约 15：普通目标权重调仓也必须保持 Trade / Signal 身份链
+    # ------------------------------------------------------------------ #
+    def test_15_regular_rebalance_sell_and_trade_initial_signal(self):
+        """非 ExitEvent 的常规清仓 SELL 也携带 Trade ID，Trade 继承首笔 BUY Signal。"""
+        bars = _bars_seq([10.0, 10.0, 10.0, 10.0])
+        targets = {
+            D1: TargetPortfolio(
+                decision_date=D1,
+                weights={SYM: 0.1},
+                signal_ids={SYM: "signal-entry-001"},
+            ),
+            D2: TargetPortfolio(decision_date=D2, weights={SYM: 0.0}),
+        }
+
+        result = _run(bars, targets)
+
+        buy_orders = [o for o in result.orders if o.side == "BUY"]
+        sell_orders = [o for o in result.orders if o.side == "SELL"]
+        self.assertEqual(len(buy_orders), 1, "应有一笔建仓 BUY")
+        self.assertEqual(len(sell_orders), 1, "应有一笔普通调仓 SELL")
+        self.assertEqual(buy_orders[0].signal_id, "signal-entry-001")
+        self.assertEqual(buy_orders[0].trade_id, "",
+                         "首笔 BUY Order 生成时尚无 Trade ID")
+        self.assertEqual(len(result.trades), 1)
+        trade = result.trades[0]
+        self.assertEqual(trade.initial_signal_id, "signal-entry-001",
+                         "Trade 应继承首笔 ENTRY Order 的 Signal")
+        self.assertTrue(sell_orders[0].trade_id,
+                        "普通调仓 SELL 不得丢失 Trade ID")
+        self.assertEqual(sell_orders[0].trade_id, trade.trade_id,
+                         "SELL Order 必须指向该持仓生命周期的 Trade")
 
 
 if __name__ == "__main__":
