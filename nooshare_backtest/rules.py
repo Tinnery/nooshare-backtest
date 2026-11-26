@@ -179,19 +179,44 @@ class RuleSet:
             return R_ZERO_VOLUME
         return ALLOW
 
+    def _effective_limit(self, bar: Bar) -> tuple[float | None, float | None, bool]:
+        """取得执行日有效涨跌停价。
+
+        V0.5 修复（Phase C）：真实 Strategy→Engine 路径的 Bar 不含
+        limit_up_price/limit_down_price（Strategy 不重复实现规则）。
+        RuleSet 作为规则权威，在此用 LimitRuleResolver 按执行日计算：
+          - Bar 已带限价（手工 Fixture / 特殊调用）优先使用；
+          - 否则用 (exchange, canonical_id, is_st, date, listing day,
+            raw pre_close) 现场解析，规则由 Resolver 单一实现。
+        """
+        no_limit = bar.no_limit
+        lu, ld = bar.limit_up_price, bar.limit_down_price
+        if (lu is None and ld is None) and not no_limit and bar.pre_close is not None:
+            rule = self.limit_resolver.resolve(
+                exchange=bar.exchange,
+                code=bar.canonical_id or (bar.symbol[2:] if len(bar.symbol) > 2 else ""),
+                is_st=bar.is_st,
+                exec_date=bar.date,
+                trading_days_since_list=bar.trading_days_since_list,
+            )
+            lu, ld = limit_prices(bar.pre_close, rule)
+            no_limit = rule.no_limit
+        return lu, ld, no_limit
+
     def _open_limit(self, bar: Bar, side: str) -> str:
         """开盘涨跌停判定（NEXT_OPEN 语义，不用收盘标记）。
 
         no_limit 日（IPO 初期等）跳过判定；
         limit price 未知（pre_close 缺失）时不拒绝，诚实留待数据修复。
         """
-        if bar.no_limit:
+        lu, ld, no_limit = self._effective_limit(bar)
+        if no_limit:
             return ALLOW
-        if side == "BUY" and bar.limit_up_price is not None:
-            if bar.open >= bar.limit_up_price - LIMIT_PRICE_EPS:
+        if side == "BUY" and lu is not None:
+            if bar.open >= lu - LIMIT_PRICE_EPS:
                 return R_OPEN_LIMIT_UP
-        if side == "SELL" and bar.limit_down_price is not None:
-            if bar.open <= bar.limit_down_price + LIMIT_PRICE_EPS:
+        if side == "SELL" and ld is not None:
+            if bar.open <= ld + LIMIT_PRICE_EPS:
                 return R_OPEN_LIMIT_DOWN
         return ALLOW
 
