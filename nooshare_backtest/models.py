@@ -72,8 +72,7 @@ class Bar:
 
     V0.4 双口径（见 design implementation-docs/nooshare-backtest/execution-model.md）：
     - open/high/low/close：Raw 可交易价格（成交、股数换算、涨跌停、费用）；
-    - mark_price：归一化 HFQ 收盘价（窗口首日基准），净值盯市估值价（缺失时回退 Raw close）；\n      禁止直接传绝对 HFQ 价：其内含上市以来全部复权因子，会把市值放大 (F-1) 倍；
-    - pre_close：Raw 前收盘价，涨跌停价计算基准（禁止用 HFQ 前收盘计算）；
+    - mark_price：账户盯市估值价。V0.7（X5-B 实验裁决）必须传 Raw close：\n          账户经济账务按真实价格盯市；HFQ 归一化基准（面板首日）在买入日 F != F_panel_start 时\n          把买入前的公司行为因子差计入持仓（X5-B 实证虚假 +50%）；\n          绝对 HFQ 价内含上市以来全部复权因子，同样禁止；\n    - pre_close：Raw 前收盘价，涨跌停价计算基准（禁止用 HFQ 前收盘计算）；
     - limit_up_price/limit_down_price：执行日生效的涨跌停价（调用方或规则解析器按 PIT 规则计算）；
     - no_limit：无涨跌幅限制日（IPO 初期等），True 时跳过涨跌停判定；
     - trading_days_since_list：执行日是该股上市后第几个交易日（按交易日历计算），
@@ -92,7 +91,7 @@ class Bar:
     close: float              # Raw 收盘价
     volume: float | None = None   # None=未知，此时仅按 is_suspended 判定；0 视为停牌/无成交
     ret: float | None = None      # HFQ 日收益（研究口径，仅参考）
-    mark_price: float | None = None   # HFQ 收盘价（盯市估值）
+    mark_price: float | None = None   # 账户盯市估值价（V0.7: Raw close）
     pre_close: float | None = None    # Raw 前收盘价（涨跌停基准）
     limit_up_price: float | None = None
     limit_down_price: float | None = None
