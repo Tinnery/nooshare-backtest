@@ -38,16 +38,25 @@ D6 = 20240109
 SYM = "sh600519"
 
 
-def _bar(date, symbol, o, c, *, volume=1_000_000, ret=0.0,
-         is_limit_down=False, is_limit_up=False):
-    """构造单支 Bar，high/low 自动包络 open/close。"""
+def _bar(date, symbol, o, c, *, volume=1_000_000.0, ret=None,
+         is_limit_down=False, is_limit_up=False, is_suspended=False,
+         is_st=False):
+    """V0.4：is_limit_down/is_limit_up 声明开盘触板——按 open 反推 pre_close，
+    使 limit_price == open，开盘订单被保守拒绝。"""
+    pre_close = lu = ld = None
+    if is_limit_down:
+        pre_close = round(o / 0.90, 2)
+    if is_limit_up:
+        pre_close = round(o / 1.10, 2)
+    if pre_close is not None:
+        lu = round(pre_close * 1.10, 2)
+        ld = round(pre_close * 0.90, 2)
     return Bar(
-        date=date, symbol=symbol,
-        open=o, high=max(o, c) * 1.01, low=min(o, c) * 0.99, close=c,
-        volume=volume, ret=ret,
-        is_limit_down=is_limit_down, is_limit_up=is_limit_up,
-        canonical_id=symbol[-6:],
-        exchange="sh" if symbol.startswith("sh") else "sz",
+        date=date, symbol=symbol, open=o, high=max(o, c) * 1.01,
+        low=min(o, c) * 0.99, close=c, volume=volume, ret=ret,
+        pre_close=pre_close, limit_up_price=lu, limit_down_price=ld,
+        is_suspended=is_suspended, is_st=is_st,
+        canonical_id=symbol[-6:], exchange=symbol[:2],
     )
 
 
@@ -281,9 +290,9 @@ class TestExitEventContracts(unittest.TestCase):
         bars = _bars_seq([
             10.0,           # D1
             10.0,           # D2 买入
-            10.0,           # D3 收盘触发止损
-            (9.0, {"is_limit_down": True}),  # D4 跌停，SELL 被拒
-            9.0,            # D5 重试卖出
+            (9.0, {"is_limit_down": True}),  # D3 执行 SELL：开盘跌停被拒
+            9.0,            # D4 重试卖出：开盘正常，成交
+            9.0,            # D5
             9.0,            # D6
         ])
 
@@ -295,8 +304,8 @@ class TestExitEventContracts(unittest.TestCase):
                     decision_date=D3, weights={},
                     exit_signals={SYM: ("STOP_LOSS", 9.0, 9.0, 0.0)},
                 )
-            # D3 之后不再重复触发退出信号，引擎自动重试
-            return TargetPortfolio(decision_date=ctx.date, weights={})
+            # D3 之后不再重复触发退出信号，引擎自动重试；无决策返回 None
+            return None
 
         result = _run(bars, strategy)
 
@@ -317,9 +326,9 @@ class TestExitEventContracts(unittest.TestCase):
         bars = _bars_seq([
             10.0,           # D1
             10.0,           # D2 买入
-            10.0,           # D3 触发止损
-            (9.0, {"is_limit_down": True}),  # D4 跌停拒绝
-            9.0,            # D5 重试
+            (9.0, {"is_limit_down": True}),  # D3 执行 SELL：开盘跌停拒绝
+            9.0,            # D4 重试
+            9.0,            # D5
             9.0,            # D6
         ])
 
@@ -331,7 +340,7 @@ class TestExitEventContracts(unittest.TestCase):
                     decision_date=D3, weights={},
                     exit_signals={SYM: ("STOP_LOSS", 9.0, 9.0, 0.0)},
                 )
-            return TargetPortfolio(decision_date=ctx.date, weights={})
+            return None
 
         result = _run(bars, strategy)
 
@@ -350,11 +359,13 @@ class TestExitEventContracts(unittest.TestCase):
     # 契约 9：部分成交后持续退出剩余数量
     # ------------------------------------------------------------------ #
     def test_09_partial_fill_continues_exit(self):
-        """SELL 部分成交后，剩余数量继续生成 Order，直到完全平仓。
+        """Exit intent 触发后持续重试直到完全平仓。
 
-        T+1 场景：D2 买 1000，D3 买 1000，D3 收盘触发退出。
-        D4 只能卖 D2 批次（1000 股），产生部分成交。
-        D5 卖出 D3 批次（1000 股），完全平仓。
+        V0.4 语义说明：NEXT_OPEN（T 日收盘决策、T+1 开盘执行、同日先卖后买）下，
+        SELL 执行日不可能存在当日买入批次（当日批次由更早决策产生，bought_date <
+        exec_date 恒成立），因此 T+1 锁定不会造成 SELL 部分成交；PARTIAL 只可能
+        来自现金/流动性约束。本用例验证 D3 触发退出后 D4 一次性完全平仓，且
+        所有 SELL 共享同一 exit_event_id。
         """
         bars = _bars_seq([10.0, 10.0, 10.0, 10.0, 10.0, 10.0])
 
@@ -368,25 +379,19 @@ class TestExitEventContracts(unittest.TestCase):
                     decision_date=D3, weights={},
                     exit_signals={SYM: ("TAKE_PROFIT", 10.0, 0.0, 10.0)},
                 )
-            return TargetPortfolio(decision_date=ctx.date, weights={})
+            return None
 
         result = _run(bars, strategy)
 
         sell_orders = [o for o in result.orders if o.side == "SELL"]
-        self.assertGreaterEqual(len(sell_orders), 2,
-                                "T+1 限制应导致至少 2 笔 SELL Order（部分成交 + 重试）")
-
-        # 第一笔 SELL 应为部分成交
-        first_sell = sell_orders[0]
-        self.assertEqual(first_sell.status, "PARTIALLY_FILLED",
-                         "第一笔 SELL 应因 T+1 限制部分成交")
-        self.assertGreater(first_sell.filled_shares, 0)
-        self.assertLess(first_sell.filled_shares, first_sell.requested_shares)
+        self.assertGreaterEqual(len(sell_orders), 1, "应有退出 SELL Order")
+        self.assertEqual(sell_orders[0].status, "FILLED",
+                         "D4 执行日无 T+1 锁定，应全部成交")
 
         # 所有 SELL 共享同一 exit_event_id
         exit_event_ids = {o.exit_event_id for o in sell_orders}
         self.assertEqual(len(exit_event_ids), 1,
-                         "部分成交重试应共享同一 exit_event_id")
+                         "退出重试应共享同一 exit_event_id")
 
         # 最终应完全平仓：所有 Fill 的 SELL 总量 = 买入总量
         buy_shares = sum(f.shares for f in result.fills if f.side == "BUY")
@@ -436,7 +441,8 @@ class TestExitEventContracts(unittest.TestCase):
             if ctx.date == D3:
                 # 重新建仓
                 return TargetPortfolio(decision_date=D3, weights={SYM: 0.1})
-            return TargetPortfolio(decision_date=ctx.date, weights={})
+            # D4 之后无决策（空 weights 会被引擎解释为清仓目标）
+            return None
 
         result = _run(bars, strategy)
 
@@ -477,9 +483,9 @@ class TestExitEventContracts(unittest.TestCase):
         bars = _bars_seq([
             10.0,           # D1
             10.0,           # D2 买入
-            10.0,           # D3 触发止损
-            (9.0, {"is_limit_down": True}),  # D4 跌停拒绝
-            (8.0, {"is_limit_down": True}),  # D5 仍跌停（最后交易日）
+            (9.0, {"is_limit_down": True}),  # D3 执行 SELL：开盘跌停拒绝
+            (8.1, {"is_limit_down": True}),  # D4 重试：开盘跌停拒绝
+            (8.0, {"is_limit_down": True}),  # D5 最后交易日：仍开盘跌停拒绝
         ])
 
         def strategy(ctx: DecisionContext):

@@ -141,7 +141,16 @@ class Portfolio:
         snaps: list[PositionSnapshot] = []
         for symbol, pos in sorted(self.positions.items()):
             bar = bars.get(symbol)
-            px = bar.close if bar and bar.close > 0 else pos.avg_cost
+            # V0.4：盯市估值价优先 mark_price（HFQ 收盘价，研究口径，除权日连续）；
+            # 缺失时回退 Raw close；两者都缺按最近成本估值。
+            px = None
+            if bar is not None:
+                if bar.mark_price is not None and bar.mark_price > 0:
+                    px = bar.mark_price
+                elif bar.close and bar.close > 0:
+                    px = bar.close
+            if px is None:
+                px = pos.avg_cost
             mv = px * pos.shares
             market_value += mv
             snaps.append(PositionSnapshot(

@@ -27,10 +27,16 @@ from nooshare_backtest.models import (
 
 
 def _bar(date: int, symbol: str, o: float, h: float, l: float, c: float,
-         ret: float | None = None, is_limit_down: bool = False) -> Bar:
+         ret: float | None = None, pre_close: float | None = None) -> Bar:
+    """V0.4：pre_close 提供时按主板 10% 手算涨跌停价。"""
+    lu = ld = None
+    if pre_close is not None:
+        lu = round(pre_close * 1.10, 2)
+        ld = round(pre_close * 0.90, 2)
     return Bar(
         date=date, symbol=symbol, open=o, high=h, low=l, close=c,
-        volume=1_000_000.0, ret=ret, is_limit_down=is_limit_down,
+        volume=1_000_000.0, ret=ret, pre_close=pre_close,
+        limit_up_price=lu, limit_down_price=ld,
         canonical_id=symbol[2:], exchange=symbol[:2],
     )
 
@@ -188,10 +194,10 @@ def test_limit_down_rejection_then_retry():
     bars = {
         20240101: {"sh600001": _bar(20240101, "sh600001", 10.0, 10.5, 9.8, 10.2, 0.0)},
         20240102: {"sh600001": _bar(20240102, "sh600001", 10.2, 10.6, 10.0, 10.4, 0.02)},
-        20240103: {"sh600001": _bar(20240103, "sh600001", 10.4, 10.8, 10.2, 10.6, 0.02)},
-        20240104: {"sh600001": _bar(20240104, "sh600001", 9.0, 9.5, 8.5, 9.0, -0.15, is_limit_down=True)},
-        20240105: {"sh600001": _bar(20240105, "sh600001", 9.0, 9.5, 8.8, 9.2, 0.02)},
-        20240106: {"sh600001": _bar(20240106, "sh600001", 9.2, 9.6, 9.0, 9.4, 0.02)},
+        20240103: {"sh600001": _bar(20240103, "sh600001", 10.4, 10.8, 10.2, 10.0, 0.02)},
+        20240104: {"sh600001": _bar(20240104, "sh600001", 9.0, 9.5, 8.5, 9.0, -0.15, pre_close=10.0)},
+        20240105: {"sh600001": _bar(20240105, "sh600001", 9.0, 9.5, 8.8, 9.2, 0.02, pre_close=9.0)},
+        20240106: {"sh600001": _bar(20240106, "sh600001", 9.2, 9.6, 9.0, 9.4, 0.02, pre_close=9.2)},
     }
 
     exit_triggered = False
@@ -222,7 +228,7 @@ def test_limit_down_rejection_then_retry():
 
     result = run(bars, decide, EngineConfig(run_id="test-retry"))
     # T3 跌停拒绝
-    rejected_orders = [o for o in result.orders if o.status == "REJECTED" and o.reason == "LIMIT_DOWN"]
+    rejected_orders = [o for o in result.orders if o.status == "REJECTED" and o.reason == "OPEN_LIMIT_DOWN"]
     assert len(rejected_orders) >= 1, "应有跌停拒绝的订单"
     # T4 回调时 pending_exit 仍在
     assert pending_exit_seen_on_retry, "跌停拒绝后 pending_exit 应在下次回调时仍存在"
@@ -237,8 +243,8 @@ def test_partial_fill_continues_exit():
         20240101: {"sh600001": _bar(20240101, "sh600001", 10.0, 10.5, 9.8, 10.2, 0.0)},
         20240102: {"sh600001": _bar(20240102, "sh600001", 10.2, 10.6, 10.0, 10.4, 0.02)},
         20240103: {"sh600001": _bar(20240103, "sh600001", 10.4, 10.8, 10.2, 10.6, 0.02)},
-        20240104: {"sh600001": _bar(20240104, "sh600001", 8.0, 8.5, 7.5, 8.2, -0.20)},
-        20240105: {"sh600001": _bar(20240105, "sh600001", 8.2, 8.6, 8.0, 8.4, 0.02)},
+        20240104: {"sh600001": _bar(20240104, "sh600001", 9.7, 9.8, 8.5, 8.6, -0.19, pre_close=10.6)},
+        20240105: {"sh600001": _bar(20240105, "sh600001", 8.2, 8.6, 8.0, 8.4, 0.02, pre_close=8.6)},
     }
 
     def decide(ctx: DecisionContext) -> TargetPortfolio | None:

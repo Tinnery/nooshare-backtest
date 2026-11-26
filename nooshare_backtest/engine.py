@@ -40,8 +40,12 @@ from .models import (
 from .rules import RuleSet
 from .trades import build_trades
 
-FILL_POLICY = "T+1 next-session open; daily OHLC simulated fills; no intraday queue reconstruction"
-ENGINE_VERSION = "0.3.0"
+FILL_POLICY = (
+    "T+1 next-session open (NEXT_OPEN); raw-price execution with conservative no-fill"
+    " at limit-open; HFQ research mark-to-market; daily OHLC simulated fills;"
+    " no intraday queue reconstruction"
+)
+ENGINE_VERSION = "0.4.0"
 
 # 决策日 -> 目标组合；或逐日决策回调（收盘后调用，返回 None 表示当日无决策）。
 # 回调收到的持仓/权益是引擎的真实状态，策略据此表达路径依赖规则（如止盈止损），
@@ -375,9 +379,9 @@ def run(
             "stamp_bp": cfg.cost_model.stamp_bp,
             "slippage_bp": cfg.cost_model.slippage_bp,
             "transfer_bp": cfg.cost_model.transfer_bp,
-            "fake_gap_limit": cfg.rules.fake_gap_limit,
             "enable_t_plus_1": cfg.rules.enable_t_plus_1,
             "enable_st_filter": cfg.rules.enable_st_filter,
+            "price_convention": "raw_execution_hfq_mark",
             "trading_days": len(dates),
         },
         strategy_version=cfg.strategy_version,

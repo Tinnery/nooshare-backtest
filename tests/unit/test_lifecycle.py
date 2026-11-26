@@ -93,7 +93,7 @@ class TestTradeLifecycle(unittest.TestCase):
         orders = [o for o in r.orders if o.side == "BUY"]
         self.assertTrue(orders)
         self.assertTrue(all(o.status == "REJECTED" for o in orders))
-        self.assertTrue(all(o.reason == "LIMIT_UP" for o in orders))
+        self.assertTrue(all(o.reason == "OPEN_LIMIT_UP" for o in orders))
         self.assertEqual(r.fills, [])
         self.assertEqual(r.trades, [])
 

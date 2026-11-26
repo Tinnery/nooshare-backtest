@@ -183,16 +183,17 @@ def execute_orders(
     # 先处理卖出
     for seq, order in enumerate([o for o in orders if o.side == "SELL"]):
         bar = bars.get(order.symbol)
-        reason = rules.can_sell(bar, not bool(portfolio.sellable_shares(order.symbol, date)))
+        total_shares = portfolio.shares_of(order.symbol)
         sellable = portfolio.sellable_shares(order.symbol, date)
-        shares = min(order.requested_shares, portfolio.shares_of(order.symbol), sellable)
+        reason = rules.can_sell(bar, sellable, total_shares)
+        shares = min(order.requested_shares, total_shares, sellable)
         if reason:
             final_orders.append(_order_with_final(order, status=ORDER_REJECTED, filled=0, reason=reason))
             deviations.append(TargetDeviation(date, order.symbol, order.target_weight,
                                               order.requested_shares, 0, reason))
             continue
         if shares <= 0:
-            block = "T_PLUS_1" if portfolio.shares_of(order.symbol) > 0 else "NO_POSITION"
+            block = "T_PLUS_1" if total_shares > 0 else "NO_SELLABLE_POSITION"
             final_orders.append(_order_with_final(order, status=ORDER_SKIPPED, filled=0, reason=block))
             continue
         bd = costs.breakdown(bar.open, shares, "SELL")
