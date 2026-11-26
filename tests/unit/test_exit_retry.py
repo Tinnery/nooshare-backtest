@@ -17,6 +17,7 @@ from __future__ import annotations
 import pytest
 
 from nooshare_backtest.engine import DecisionContext, EngineConfig, PendingExit, run
+from tests.fixtures.preclose import backfill_pre_close
 from nooshare_backtest.models import (
     Bar,
     EXIT_STOP_LOSS,
@@ -57,7 +58,7 @@ def test_first_buy_order_carries_signal():
             )
         return None
 
-    result = run(bars, decide, EngineConfig(run_id="test-signal"))
+    result = run(backfill_pre_close(bars), decide, EngineConfig(run_id="test-signal"))
     buy_orders = [o for o in result.orders if o.side == "BUY"]
     assert len(buy_orders) == 1
     assert buy_orders[0].signal_id == "signal-abc-123"
@@ -78,9 +79,9 @@ def test_trade_id_stable_across_runs():
             return TargetPortfolio(decision_date=ctx.date, weights={})
         return None
 
-    r1 = run(bars, decide, EngineConfig(run_id="run-A"))
-    r2 = run(bars, decide, EngineConfig(run_id="run-A"))
-    r3 = run(bars, decide, EngineConfig(run_id="run-B"))
+    r1 = run(backfill_pre_close(bars), decide, EngineConfig(run_id="run-A"))
+    r2 = run(backfill_pre_close(bars), decide, EngineConfig(run_id="run-A"))
+    r3 = run(backfill_pre_close(bars), decide, EngineConfig(run_id="run-B"))
 
     assert len(r1.trades) == 1
     assert len(r2.trades) == 1
@@ -114,7 +115,7 @@ def test_trade_id_established_on_first_buy_fill():
             seen_trade_ids.append(pos.trade_id)
         return None
 
-    run(bars, decide, EngineConfig(run_id="test-early-trade-id"))
+    run(backfill_pre_close(bars), decide, EngineConfig(run_id="test-early-trade-id"))
     assert len(seen_trade_ids) == 1
     # UUID5 格式：8-4-4-4-12 hex digits
     import re
@@ -145,7 +146,7 @@ def test_exit_event_precise_association():
             )
         return None
 
-    result = run(bars, decide, EngineConfig(run_id="test-exit-assoc"))
+    result = run(backfill_pre_close(bars), decide, EngineConfig(run_id="test-exit-assoc"))
     assert len(result.trades) == 1
     trade = result.trades[0]
     assert trade.status == "CLOSED"
@@ -183,7 +184,7 @@ def test_stop_loss_priority_over_take_profit():
             )
         return None
 
-    result = run(bars, decide, EngineConfig(run_id="test-stop-priority"))
+    result = run(backfill_pre_close(bars), decide, EngineConfig(run_id="test-stop-priority"))
     sell_orders = [o for o in result.orders if o.side == "SELL"]
     assert len(sell_orders) >= 1
     assert sell_orders[0].decision_reason == EXIT_STOP_LOSS
@@ -226,7 +227,7 @@ def test_limit_down_rejection_then_retry():
                 pending_exit_seen_on_retry = True
         return None
 
-    result = run(bars, decide, EngineConfig(run_id="test-retry"))
+    result = run(backfill_pre_close(bars), decide, EngineConfig(run_id="test-retry"))
     # T3 跌停拒绝
     rejected_orders = [o for o in result.orders if o.status == "REJECTED" and o.reason == "OPEN_LIMIT_DOWN"]
     assert len(rejected_orders) >= 1, "应有跌停拒绝的订单"
@@ -261,7 +262,7 @@ def test_partial_fill_continues_exit():
             )
         return None
 
-    result = run(bars, decide, EngineConfig(run_id="test-partial"))
+    result = run(backfill_pre_close(bars), decide, EngineConfig(run_id="test-partial"))
     sell_orders = [o for o in result.orders if o.side == "SELL"]
     # 至少有一次卖出尝试
     assert len(sell_orders) >= 1
@@ -283,7 +284,7 @@ def test_open_trade_at_backtest_end():
             return TargetPortfolio(decision_date=ctx.date, weights={"sh600001": 0.95})
         return None
 
-    result = run(bars, decide, EngineConfig(run_id="test-open"))
+    result = run(backfill_pre_close(bars), decide, EngineConfig(run_id="test-open"))
     assert len(result.trades) == 1
     trade = result.trades[0]
     assert trade.status == "OPEN"
@@ -315,7 +316,7 @@ def test_pending_exit_incomplete_at_backtest_end():
         # T3 触发止损，但 T4 是最后一天，无法执行
         return None
 
-    result = run(bars, decide, EngineConfig(run_id="test-pending-exit"))
+    result = run(backfill_pre_close(bars), decide, EngineConfig(run_id="test-pending-exit"))
     # 检查 deviations 中是否有 PENDING_EXIT 标记
     pending_devs = [d for d in result.deviations if "PENDING_EXIT" in d.reason]
     # 如果 T4 无法执行（例如跌停），应有 PENDING_EXIT 标记
@@ -339,9 +340,9 @@ def test_multiple_runs_event_identity_no_conflict():
             return TargetPortfolio(decision_date=ctx.date, weights={})
         return None
 
-    r1 = run(bars, decide, EngineConfig(run_id="run-1"))
-    r2 = run(bars, decide, EngineConfig(run_id="run-2"))
-    r3 = run(bars, decide, EngineConfig(run_id="run-3"))
+    r1 = run(backfill_pre_close(bars), decide, EngineConfig(run_id="run-1"))
+    r2 = run(backfill_pre_close(bars), decide, EngineConfig(run_id="run-2"))
+    r3 = run(backfill_pre_close(bars), decide, EngineConfig(run_id="run-3"))
 
     # 所有 Trade ID 互不冲突
     trade_ids = [r1.trades[0].trade_id, r2.trades[0].trade_id, r3.trades[0].trade_id]

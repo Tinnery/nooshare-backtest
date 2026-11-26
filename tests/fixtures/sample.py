@@ -6,6 +6,9 @@ from nooshare_backtest.models import Bar
 D1, D2, D3, D4 = 20240102, 20240103, 20240104, 20240105
 
 
+from tests.fixtures.preclose import backfill_pre_close
+
+
 def sample_bars() -> dict[int, dict[str, Bar]]:
     raw = {
         D1: {"AAA": (10.0, 10.2, 9.9, 10.1, 0.01), "BBB": (20.0, 20.1, 19.9, 20.0, 0.0)},
@@ -13,7 +16,7 @@ def sample_bars() -> dict[int, dict[str, Bar]]:
         D3: {"AAA": (10.4, 10.6, 10.2, 10.3, -0.01), "BBB": (20.4, 20.7, 20.3, 20.6, 0.01)},
         D4: {"AAA": (10.3, 10.6, 10.2, 10.5, 0.02), "BBB": (20.6, 20.9, 20.5, 20.8, 0.01)},
     }
-    return {
+    _bars = {
         date: {
             sym: Bar(date=date, symbol=sym, open=o, high=h, low=l, close=c,
                      volume=1_000_000, ret=r)
@@ -21,6 +24,8 @@ def sample_bars() -> dict[int, dict[str, Bar]]:
         }
         for date, day in raw.items()
     }
+    return backfill_pre_close(_bars)
+
 
 
 def sample_decisions() -> dict[int, dict[str, float]]:

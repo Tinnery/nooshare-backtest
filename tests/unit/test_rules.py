@@ -71,9 +71,12 @@ class TestOpenStateRules(unittest.TestCase):
         self.assertEqual(self.rules.can_buy(bar(is_st=True)), R_ST)      # 政策过滤
         self.assertEqual(self.rules.can_sell(bar(is_st=True), 1000, 1000), "")  # 卖出不限
 
-    def test_missing_limit_price_does_not_block(self):
-        # 涨跌停价未知（pre_close 缺失）时诚实放行，不猜测
-        self.assertEqual(self.rules.can_buy(bar(limit_up_price=None)), "")
+    def test_missing_limit_price_conservatively_rejected(self):
+        # V0.7 P0-4：涨跌停价不可判定（pre_close 缺失）时保守拒绝，
+        # 防止开盘涨跌停锁定状态下以不真实价格成交。
+        from nooshare_backtest.rules import R_LIMIT_REF_UNKNOWN
+        self.assertEqual(self.rules.can_buy(bar(limit_up_price=None)),
+                         R_LIMIT_REF_UNKNOWN)
 
 
 class TestLimitRuleResolver(unittest.TestCase):

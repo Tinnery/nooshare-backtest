@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 from nooshare_backtest.models import Bar
+from tests.fixtures.preclose import backfill_pre_close
 
 D1, D2, D3, D4, D5, D6 = 20240102, 20240103, 20240104, 20240105, 20240108, 20240109
 
@@ -30,41 +31,45 @@ def _bar(date, symbol, o, c, *, volume=1_000_000, ret=0.0,
 def normal_bars() -> dict[int, dict[str, Bar]]:
     """D1 收盘决策买入，D2 开盘买入，D3 开盘卖出：一次完整正常交易。"""
     s = "sh600519"
-    return {
+    _b = {
         D1: {s: _bar(D1, s, 10.0, 10.0)},
         D2: {s: _bar(D2, s, 10.0, 10.2, pre_close=10.0)},
         D3: {s: _bar(D3, s, 10.2, 10.4, pre_close=10.2)},
         D4: {s: _bar(D4, s, 10.4, 10.4, pre_close=10.4)},
     }
+    return backfill_pre_close(_b)
 
 
 def limit_up_bars() -> dict[int, dict[str, Bar]]:
     """V0.4 开盘涨停语义：D2 开盘价 = round(10.0×1.10,2)=11.0 → 买入拒绝；
     D3 开盘价 = round(11.0×1.10,2)=12.1 → 仍拒绝（连续一字板）。"""
     s = "sh600519"
-    return {
+    _b = {
         D1: {s: _bar(D1, s, 10.0, 10.0)},
         D2: {s: _bar(D2, s, 11.0, 11.0, pre_close=10.0)},
         D3: {s: _bar(D3, s, 12.1, 12.1, pre_close=11.0)},
     }
+    return backfill_pre_close(_b)
 
 
 def multi_lot_bars() -> dict[int, dict[str, Bar]]:
     """D1 买 1000，D2 买 500，D3 卖 1000（只能卖 D1 批次），验证 T+1 批次。"""
     s = "sh600519"
-    return {
+    _b = {
         D1: {s: _bar(D1, s, 10.0, 10.0)},
         D2: {s: _bar(D2, s, 10.0, 10.0, pre_close=10.0)},
         D3: {s: _bar(D3, s, 10.0, 10.0, pre_close=10.0)},
         D4: {s: _bar(D4, s, 10.0, 10.0, pre_close=10.0)},
         D5: {s: _bar(D5, s, 10.0, 10.0, pre_close=10.0)},
     }
+    return backfill_pre_close(_b)
 
 
 def open_position_bars() -> dict[int, dict[str, Bar]]:
     s = "sh600519"
-    return {
+    _b = {
         D1: {s: _bar(D1, s, 10.0, 10.0)},
         D2: {s: _bar(D2, s, 10.0, 10.0, pre_close=10.0)},
         D3: {s: _bar(D3, s, 10.0, 10.0, pre_close=10.0)},
     }
+    return backfill_pre_close(_b)

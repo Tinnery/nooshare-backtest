@@ -19,6 +19,7 @@ import uuid
 import pytest
 
 from nooshare_backtest.engine import DecisionContext, EngineConfig, run
+from tests.fixtures.preclose import backfill_pre_close
 from nooshare_backtest.models import (
     Bar,
     EXIT_STOP_LOSS,
@@ -65,7 +66,7 @@ def test_sell_order_carries_trade_id():
             )
         return None
 
-    result = run(bars, decide, EngineConfig(run_id="test-trade-id"))
+    result = run(backfill_pre_close(bars), decide, EngineConfig(run_id="test-trade-id"))
     sell_orders = [o for o in result.orders if o.side == "SELL"]
     assert len(sell_orders) >= 1
     for order in sell_orders:
@@ -92,7 +93,7 @@ def test_sell_fill_carries_exit_event_id():
             )
         return None
 
-    result = run(bars, decide, EngineConfig(run_id="test-fill-exit-id"))
+    result = run(backfill_pre_close(bars), decide, EngineConfig(run_id="test-fill-exit-id"))
     sell_fills = [f for f in result.fills if f.side == "SELL"]
     assert len(sell_fills) >= 1
     for fill in sell_fills:
@@ -123,7 +124,7 @@ def test_rejected_sell_order_still_carries_ids():
     # 修改第二日数据为跌停
     bars[20240103] = {"sh600001": _bar(20240103, "sh600001", 10.4, 10.4, 10.4, 10.4, -0.1, is_limit_down=True)}
 
-    result = run(bars, decide, EngineConfig(run_id="test-rejected-ids"))
+    result = run(backfill_pre_close(bars), decide, EngineConfig(run_id="test-rejected-ids"))
     rejected_sells = [o for o in result.orders if o.side == "SELL" and o.status == "REJECTED"]
     # 如果有被拒绝的订单，检查它们携带正确的 ID
     for order in rejected_sells:
@@ -154,7 +155,7 @@ def test_retry_order_same_exit_event_id():
     # 第三日跌停导致部分成交或拒绝
     bars[20240103] = {"sh600001": _bar(20240103, "sh600001", 10.4, 10.4, 10.4, 10.4, -0.1, is_limit_down=True)}
 
-    result = run(bars, decide, EngineConfig(run_id="test-retry-same-id"))
+    result = run(backfill_pre_close(bars), decide, EngineConfig(run_id="test-retry-same-id"))
     sell_orders = [o for o in result.orders if o.side == "SELL"]
     
     # 如果有多个 SELL 订单（重试），它们应该有相同的 exit_event_id
@@ -183,7 +184,7 @@ def test_backtest_result_exit_events_populated():
             )
         return None
 
-    result = run(bars, decide, EngineConfig(run_id="test-exit-events"))
+    result = run(backfill_pre_close(bars), decide, EngineConfig(run_id="test-exit-events"))
     assert hasattr(result, "exit_events"), "BacktestResult should have exit_events attribute"
     assert len(result.exit_events) >= 1, "exit_events should be populated when exits occur"
 
@@ -207,7 +208,7 @@ def test_exit_event_status_complete_after_full_fill():
             )
         return None
 
-    result = run(bars, decide, EngineConfig(run_id="test-complete-status"))
+    result = run(backfill_pre_close(bars), decide, EngineConfig(run_id="test-complete-status"))
     assert len(result.exit_events) >= 1
     # 完全成交的退出事件状态应为 complete
     complete_events = [e for e in result.exit_events if e.status == "complete"]
@@ -234,7 +235,7 @@ def test_exit_event_status_abandoned():
             )
         return None
 
-    result = run(bars, decide, EngineConfig(run_id="test-abandoned-status"))
+    result = run(backfill_pre_close(bars), decide, EngineConfig(run_id="test-abandoned-status"))
     # 如果有未完成的退出事件，状态应为 abandoned
     abandoned_events = [e for e in result.exit_events if e.status == "abandoned"]
     # 注意：这取决于具体的成交逻辑，可能没有 abandoned 事件
@@ -261,7 +262,7 @@ def test_all_exit_event_ids_are_valid_uuids():
             )
         return None
 
-    result = run(bars, decide, EngineConfig(run_id="test-uuid-validity"))
+    result = run(backfill_pre_close(bars), decide, EngineConfig(run_id="test-uuid-validity"))
     
     # 检查所有 ExitEvent 的 exit_event_id
     for ee in result.exit_events:
@@ -298,7 +299,7 @@ def test_all_trade_ids_are_valid_uuids():
             )
         return None
 
-    result = run(bars, decide, EngineConfig(run_id="test-trade-uuid-validity"))
+    result = run(backfill_pre_close(bars), decide, EngineConfig(run_id="test-trade-uuid-validity"))
     
     # 检查所有 ExitEvent 的 trade_id
     for ee in result.exit_events:

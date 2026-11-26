@@ -9,6 +9,7 @@ from __future__ import annotations
 import pytest
 
 from nooshare_backtest.engine import DecisionContext, EngineConfig, run
+from tests.fixtures.preclose import backfill_pre_close
 from nooshare_backtest.models import Bar, TargetPortfolio
 
 
@@ -44,7 +45,7 @@ def test_callback_receives_engine_state():
             return TargetPortfolio(decision_date=ctx.date, weights={"sh600001": 0.95})
         return None
 
-    result = run(_bars(), decide, EngineConfig(run_id="cb-state"))
+    result = run(backfill_pre_close(_bars()), decide, EngineConfig(run_id="cb-state"))
     # T1 开盘买入成交（fill.price 为含滑点的实际成交价：open * (1 + slippage_bp)）
     buys = [f for f in result.fills if f.side == "BUY"]
     assert len(buys) == 1
@@ -75,7 +76,7 @@ def test_callback_position_view_after_fill():
             assert ctx.positions[0].sellable_shares == ctx.positions[0].shares
         return None
 
-    run(_bars(), decide, EngineConfig(run_id="cb-view"))
+    run(backfill_pre_close(_bars()), decide, EngineConfig(run_id="cb-view"))
 
 
 def test_callback_exit_decision_executes_next_session():
@@ -89,7 +90,7 @@ def test_callback_exit_decision_executes_next_session():
             return TargetPortfolio(decision_date=ctx.date, weights={})
         return None
 
-    result = run(_bars(), decide, EngineConfig(run_id="cb-exit"))
+    result = run(backfill_pre_close(_bars()), decide, EngineConfig(run_id="cb-exit"))
     sells = [f for f in result.fills if f.side == "SELL"]
     assert len(sells) == 1
     assert sells[0].date == 20240104
@@ -104,7 +105,7 @@ def test_callback_none_means_no_decision():
     def decide(ctx: DecisionContext) -> TargetPortfolio | None:
         return None
 
-    result = run(_bars(), decide, EngineConfig(run_id="cb-none"))
+    result = run(backfill_pre_close(_bars()), decide, EngineConfig(run_id="cb-none"))
     assert result.fills == []
     assert result.orders == []
     assert result.trades == []
@@ -118,7 +119,7 @@ def test_last_day_callback_decision_marked_no_next_session():
             return TargetPortfolio(decision_date=ctx.date, weights={"sh600001": 0.5})
         return None
 
-    result = run(_bars(), decide, EngineConfig(run_id="cb-last"))
+    result = run(backfill_pre_close(_bars()), decide, EngineConfig(run_id="cb-last"))
     reasons = [d.reason for d in result.deviations]
     assert "NO_NEXT_SESSION" in reasons
 
@@ -135,7 +136,7 @@ def test_hold_position_generates_no_orders():
             return TargetPortfolio(decision_date=ctx.date, weights={}, hold=frozenset({"sh600001"}))
         return None
 
-    result = run(_bars(), decide, EngineConfig(run_id="cb-hold"))
+    result = run(backfill_pre_close(_bars()), decide, EngineConfig(run_id="cb-hold"))
     sells = [f for f in result.fills if f.side == "SELL"]
     assert sells == [], "hold 持仓不得被清仓"
     # T3 收盘持仓仍在（T2 未触发卖出，T3 无决策）
@@ -155,6 +156,6 @@ def test_hold_position_eventually_sellable_via_weights():
             return TargetPortfolio(decision_date=ctx.date, weights={})  # 清仓
         return None
 
-    result = run(_bars(), decide, EngineConfig(run_id="cb-hold-sell"))
+    result = run(backfill_pre_close(_bars()), decide, EngineConfig(run_id="cb-hold-sell"))
     sells = [f for f in result.fills if f.side == "SELL"]
     assert len(sells) == 1 and sells[0].date == 20240104

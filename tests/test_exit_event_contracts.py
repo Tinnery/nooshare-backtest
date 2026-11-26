@@ -25,6 +25,7 @@ import unittest
 import uuid
 
 from nooshare_backtest.engine import DecisionContext, EngineConfig, run
+from tests.fixtures.preclose import backfill_pre_close
 from nooshare_backtest.models import Bar, TargetPortfolio
 
 
@@ -72,7 +73,7 @@ def _bars_seq(prices, start_date=D1, symbol=SYM):
         else:
             px, kw = item, {}
         bars[start_date + i] = {symbol: _bar(start_date + i, symbol, px, px, **kw)}
-    return bars
+    return backfill_pre_close(bars)
 
 
 def _is_uuid(s):
@@ -86,7 +87,7 @@ def _is_uuid(s):
 
 def _run(bars, targets, run_id="test", initial_cash=100_000.0):
     """简化的引擎调用。"""
-    return run(bars, targets, EngineConfig(run_id=run_id, initial_cash=initial_cash))
+    return run(backfill_pre_close(bars), targets, EngineConfig(run_id=run_id, initial_cash=initial_cash))
 
 
 class TestExitEventContracts(unittest.TestCase):

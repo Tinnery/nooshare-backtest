@@ -29,6 +29,7 @@ R_OPEN_LIMIT_DOWN = "OPEN_LIMIT_DOWN"
 R_ST = "ST"                 # 语义：策略股票池政策过滤（非交易所限制）
 R_T_PLUS_1 = "T_PLUS_1"
 R_NO_SELLABLE = "NO_SELLABLE_POSITION"
+R_LIMIT_REF_UNKNOWN = "LIMIT_REFERENCE_UNKNOWN"
 
 # 涨跌停价相等判定容差：价格按 2 位小数舍入，1e-4 覆盖浮点表示误差。
 LIMIT_PRICE_EPS = 1e-4
@@ -206,16 +207,23 @@ class RuleSet:
     def _open_limit(self, bar: Bar, side: str) -> str:
         """开盘涨跌停判定（NEXT_OPEN 语义，不用收盘标记）。
 
-        no_limit 日（IPO 初期等）跳过判定；
-        limit price 未知（pre_close 缺失）时不拒绝，诚实留待数据修复。
+        no_limit 日（IPO 初期等）跳过判定。
+        V0.7 P0-4：涨跌停价不可判定（pre_close 缺失且 Bar 未预填限价）
+        时保守拒绝 LIMIT_REFERENCE_UNKNOWN——开盘可能处于涨跌停锁定，
+        放行会以不真实的开盘价成交（买入穿涨停 / 卖出穿跌停）。
+        宁可不交易，不可假交易。
         """
         lu, ld, no_limit = self._effective_limit(bar)
         if no_limit:
             return ALLOW
-        if side == "BUY" and lu is not None:
+        if side == "BUY":
+            if lu is None:
+                return R_LIMIT_REF_UNKNOWN
             if bar.open >= lu - LIMIT_PRICE_EPS:
                 return R_OPEN_LIMIT_UP
-        if side == "SELL" and ld is not None:
+        if side == "SELL":
+            if ld is None:
+                return R_LIMIT_REF_UNKNOWN
             if bar.open <= ld + LIMIT_PRICE_EPS:
                 return R_OPEN_LIMIT_DOWN
         return ALLOW
