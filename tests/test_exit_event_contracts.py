@@ -12,7 +12,7 @@
  6. Rejected SELL 没有 Fill，但仍能关联 Trade 和 ExitEvent
  7. 同一 ExitEvent 跌停拒绝后重试
  8. 重试 Order 保持相同 exit_event_id
- 9. 部分成交后持续退出剩余数量
+ 9. 多批次建仓后退出一次性完全平仓（T+1 下无部分成交）
 10. 完全平仓后 ExitEvent status=complete
 11. 平仓后重新建仓生成新 trade_id
 12. 回测结束时仍有 OPEN Trade
@@ -281,11 +281,10 @@ class TestExitEventContracts(unittest.TestCase):
         """跌停拒绝后，下一个交易日继续生成 SELL Order。"""
         bars = _bars_seq([
             10.0,           # D1
-            10.0,           # D2 买入
-            10.0,           # D3 收盘触发止损
-            (9.0, {"is_limit_down": True}),  # D4 跌停，SELL 被拒
-            9.0,            # D5 重试卖出
-            9.0,            # D6
+            10.0,           # D2 收盘触发止损（T 日决策）
+            (9.0, {"is_limit_down": True}),  # D3 执行日跌停，SELL 被拒
+            9.0,            # D4 重试卖出成交
+            9.0,            # D5
         ])
 
         def strategy(ctx: DecisionContext):
@@ -296,7 +295,7 @@ class TestExitEventContracts(unittest.TestCase):
                     decision_date=D3, weights={},
                     exit_signals={SYM: ("STOP_LOSS", 9.0, 9.0, 0.0)},
                 )
-            # D3 之后不再重复触发退出信号，引擎自动重试
+            # 退出意图创建后不再重复触发，引擎自动重试
             return TargetPortfolio(decision_date=ctx.date, weights={})
 
         result = _run(bars, strategy)
@@ -317,11 +316,10 @@ class TestExitEventContracts(unittest.TestCase):
         """多次重试的 SELL Order 都应引用同一个 exit_event_id。"""
         bars = _bars_seq([
             10.0,           # D1
-            10.0,           # D2 买入
-            10.0,           # D3 触发止损
-            (9.0, {"is_limit_down": True}),  # D4 跌停拒绝
-            9.0,            # D5 重试
-            9.0,            # D6
+            10.0,           # D2 收盘触发止损（T 日决策）
+            (9.0, {"is_limit_down": True}),  # D3 执行日跌停拒绝
+            9.0,            # D4 重试
+            9.0,            # D5
         ])
 
         def strategy(ctx: DecisionContext):
@@ -348,14 +346,15 @@ class TestExitEventContracts(unittest.TestCase):
                         f"exit_event_id 应为有效 UUID: {ee_id}")
 
     # ------------------------------------------------------------------ #
-    # 契约 9：部分成交后持续退出剩余数量
+    # 契约 9：多批次建仓后退出一次性完全平仓（T+1 下无部分成交）
     # ------------------------------------------------------------------ #
-    def test_09_partial_fill_continues_exit(self):
-        """SELL 部分成交后，剩余数量继续生成 Order，直到完全平仓。
+    def test_09_multi_lot_exit_fully_closes(self):
+        """多批次建仓后退出：T+1 下所有批次在退出执行日均可卖，一次性完全平仓。
 
-        T+1 场景：D2 买 1000，D3 买 1000，D3 收盘触发退出。
-        D4 只能卖 D2 批次（1000 股），产生部分成交。
-        D5 卖出 D3 批次（1000 股），完全平仓。
+        A 股 T+1 语义是「当日买入当日不可卖，下一交易日可卖」
+        （execution-model.md）。D2、D3 的买入批次到 D4 执行退出时均已过 T+1，
+        因此不存在 T+1 导致的 SELL 部分成交；退出一次性全额成交。
+        本测试验证多批次建仓归集到同一 Trade，且共享同一 exit_event_id。
         """
         bars = _bars_seq([10.0, 10.0, 10.0, 10.0, 10.0, 10.0])
 
@@ -374,22 +373,16 @@ class TestExitEventContracts(unittest.TestCase):
         result = _run(bars, strategy)
 
         sell_orders = [o for o in result.orders if o.side == "SELL"]
-        self.assertGreaterEqual(len(sell_orders), 2,
-                                "T+1 限制应导致至少 2 笔 SELL Order（部分成交 + 重试）")
+        self.assertEqual(len(sell_orders), 1,
+                         "退出执行日所有批次已过 T+1，应一次性全额成交")
+        self.assertEqual(sell_orders[0].status, "FILLED")
+        self.assertEqual(sell_orders[0].filled_shares,
+                         sell_orders[0].requested_shares)
 
-        # 第一笔 SELL 应为部分成交
-        first_sell = sell_orders[0]
-        self.assertEqual(first_sell.status, "PARTIALLY_FILLED",
-                         "第一笔 SELL 应因 T+1 限制部分成交")
-        self.assertGreater(first_sell.filled_shares, 0)
-        self.assertLess(first_sell.filled_shares, first_sell.requested_shares)
-
-        # 所有 SELL 共享同一 exit_event_id
         exit_event_ids = {o.exit_event_id for o in sell_orders}
         self.assertEqual(len(exit_event_ids), 1,
-                         "部分成交重试应共享同一 exit_event_id")
+                         "退出订单应共享同一 exit_event_id")
 
-        # 最终应完全平仓：所有 Fill 的 SELL 总量 = 买入总量
         buy_shares = sum(f.shares for f in result.fills if f.side == "BUY")
         sell_shares = sum(f.shares for f in result.fills if f.side == "SELL")
         self.assertEqual(sell_shares, buy_shares,
@@ -428,18 +421,14 @@ class TestExitEventContracts(unittest.TestCase):
         """完全平仓后再次买入，新 position 的 trade_id 应与之前不同。"""
         bars = _bars_seq([10.0, 10.0, 10.0, 10.0, 10.0, 10.0])
 
-        def strategy(ctx: DecisionContext):
-            if ctx.date == D1:
-                return TargetPortfolio(decision_date=D1, weights={SYM: 0.1})
-            if ctx.date == D2:
-                # 平仓
-                return TargetPortfolio(decision_date=D2, weights={SYM: 0.0})
-            if ctx.date == D3:
-                # 重新建仓
-                return TargetPortfolio(decision_date=D3, weights={SYM: 0.1})
-            return TargetPortfolio(decision_date=ctx.date, weights={})
+        # D3 之后不再给决策：重建的持仓保持到回测结束（OPEN）
+        targets = {
+            D1: TargetPortfolio(decision_date=D1, weights={SYM: 0.1}),
+            D2: TargetPortfolio(decision_date=D2, weights={SYM: 0.0}),
+            D3: TargetPortfolio(decision_date=D3, weights={SYM: 0.1}),
+        }
 
-        result = _run(bars, strategy)
+        result = _run(bars, targets)
 
         self.assertEqual(len(result.trades), 2,
                          "应有两个 Trade（建仓→平仓→重新建仓）")
@@ -474,13 +463,12 @@ class TestExitEventContracts(unittest.TestCase):
     # ------------------------------------------------------------------ #
     def test_13_exit_event_abandoned_at_backtest_end(self):
         """触发止盈但跌停无法卖出，回测结束时 ExitEvent.status='abandoned'。"""
-        # D2 买入，D3 触发止损，D4 跌停拒绝，D5 仍跌停 → 回测结束仍未平仓
+        # D2 收盘触发止损（T 日决策），D3 执行日跌停拒绝，D4 仍跌停 → 回测结束仍未平仓
         bars = _bars_seq([
             10.0,           # D1
-            10.0,           # D2 买入
-            10.0,           # D3 触发止损
-            (9.0, {"is_limit_down": True}),  # D4 跌停拒绝
-            (8.0, {"is_limit_down": True}),  # D5 仍跌停（最后交易日）
+            10.0,           # D2 收盘触发止损（T 日决策）
+            (9.0, {"is_limit_down": True}),  # D3 执行日跌停拒绝
+            (8.0, {"is_limit_down": True}),  # D4 仍跌停（最后交易日）
         ])
 
         def strategy(ctx: DecisionContext):
