@@ -72,7 +72,7 @@ class Bar:
 
     V0.4 双口径（见 design implementation-docs/nooshare-backtest/execution-model.md）：
     - open/high/low/close：Raw 可交易价格（成交、股数换算、涨跌停、费用）；
-    - mark_price：HFQ 收盘价，净值盯市估值价（缺失时回退 Raw close）；
+    - mark_price：归一化 HFQ 收盘价（窗口首日基准），净值盯市估值价（缺失时回退 Raw close）；\n      禁止直接传绝对 HFQ 价：其内含上市以来全部复权因子，会把市值放大 (F-1) 倍；
     - pre_close：Raw 前收盘价，涨跌停价计算基准（禁止用 HFQ 前收盘计算）；
     - limit_up_price/limit_down_price：执行日生效的涨跌停价（调用方或规则解析器按 PIT 规则计算）；
     - no_limit：无涨跌幅限制日（IPO 初期等），True 时跳过涨跌停判定；

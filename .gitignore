@@ -71,3 +71,6 @@ cache/
 *.pkl
 *.pickle
 uv.lock
+
+# local experiment scripts (never commit)
+.runtime/
