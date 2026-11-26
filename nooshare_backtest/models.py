@@ -137,6 +137,7 @@ class Order:
     exchange: str = ""
     filled_shares: int = 0
     exit_event_id: str = ""
+    trade_id: str = ""
     decision_reason: str = ""
 
     @property
@@ -167,6 +168,7 @@ class Fill:
     fill_id: str = ""
     order_id: str = ""
     trade_id: str = ""
+    exit_event_id: str = ""
     canonical_id: str = ""
     exchange: str = ""
 
@@ -225,6 +227,24 @@ class Trade:
     total_cost: float = 0.0
     holding_days: int = 0
     exit_reason: str = "OPEN"
+
+
+
+@dataclass(frozen=True)
+class ExitEvent:
+    """退出事件：记录一次退出意图的完整生命周期。
+
+    从 pending 开始，成交后转为 complete（或部分成交后 partial），
+    回测结束仍未完全平仓则标记为 abandoned。
+    """
+    exit_event_id: str
+    trade_id: str
+    decision_date: int        # YYYYMMDD 格式
+    reason: str               # STOP_LOSS / TAKE_PROFIT / TARGET_WEIGHT / MANUAL
+    reference_price: float
+    stop_price: float
+    take_price: float
+    status: str = "pending"   # pending / partial / complete / abandoned
 
 
 # ---------- 账本 ----------

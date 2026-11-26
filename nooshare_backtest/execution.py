@@ -57,6 +57,7 @@ def plan_orders(
     exec_date: int | None = None,
     run_id: str = "run",
     pending_exits: dict[str, dict] | None = None,
+    trade_ids: dict[str, str] | None = None,
 ) -> list[Order]:
     """按目标权重生成订单。以执行日开盘价估算目标股数。
 
@@ -84,6 +85,7 @@ def plan_orders(
                 decision_date=target.decision_date,
                 canonical_id=bar.canonical_id, exchange=bar.exchange,
                 exit_event_id=exit_info["exit_event_id"],
+                trade_id=trade_ids.get(symbol, "") if trade_ids else "",
                 decision_reason=exit_info["reason"],
             ))
     
@@ -149,6 +151,7 @@ def _fill(
         fill_id=event_id(order.order_id or "run", "fill", date, seq),
         order_id=order.order_id,
         trade_id=trade_id,
+        exit_event_id=order.exit_event_id,
         canonical_id=order.canonical_id, exchange=order.exchange,
     )
 

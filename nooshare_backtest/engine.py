@@ -28,6 +28,7 @@ from .models import (
     CostSummary,
     EXIT_STOP_LOSS,
     EXIT_TAKE_PROFIT,
+    ExitEvent,
     Order,
     PositionView,
     RunMetadata,
@@ -138,6 +139,7 @@ def run(
     fills: list = []
     deviations: list = []
     cost_total = CostSummary()
+    exit_events: list[ExitEvent] = []  # 跟踪所有退出事件
 
     for date in dates:
         day_bars = dict(bars_by_date[date])
@@ -159,6 +161,7 @@ def run(
                     pending, portfolio, day_bars, last_total_asset,
                     cfg.execution, exec_date=date, run_id=cfg.run_id,
                     pending_exits=pending_exits_dict,
+                    trade_ids=trade_ids,
                 )
             else:
                 # 只有退出订单，没有常规调仓
@@ -167,6 +170,7 @@ def run(
                     portfolio, day_bars, last_total_asset,
                     cfg.execution, exec_date=date, run_id=cfg.run_id,
                     pending_exits=pending_exits_dict,
+                    trade_ids=trade_ids,
                 )
             
             # Prepare mutable trade_seq for execute_orders to update
@@ -342,4 +346,5 @@ def run(
         costs=cost_total,
         metrics=metrics,
         deviations=deviations,
+        exit_events=exit_events,
     )
