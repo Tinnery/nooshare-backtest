@@ -117,6 +117,7 @@ def plan_orders(
             decision_date=target.decision_date,
             canonical_id=bar.canonical_id if bar else "",
             exchange=bar.exchange if bar else "",
+            trade_id=trade_ids.get(symbol, "") if trade_ids else "",
         ))
     # 先卖后买，释放现金供买入；order_id 已确定，顺序稳定可复现。
     orders.sort(key=lambda o: (o.side != "SELL", o.symbol))
