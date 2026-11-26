@@ -139,7 +139,7 @@ def run(
     fills: list = []
     deviations: list = []
     cost_total = CostSummary()
-    exit_events: list[ExitEvent] = []  # 跟踪所有退出事件
+    exit_events_by_id: dict[str, ExitEvent] = {}  # 跟踪所有退出事件
 
     for date in dates:
         day_bars = dict(bars_by_date[date])
@@ -197,6 +197,23 @@ def run(
                 # 如果是 SELL 且有对应的待退出意图，更新剩余数量
                 if fill.side == "SELL" and fill.symbol in pending_exits:
                     pending_exits[fill.symbol].remaining_shares -= fill.shares
+                    # 更新 ExitEvent 状态
+                    if fill.exit_event_id and fill.exit_event_id in exit_events_by_id:
+                        old_ee = exit_events_by_id[fill.exit_event_id]
+                        if pending_exits[fill.symbol].remaining_shares <= 0:
+                            new_status = "complete"
+                        else:
+                            new_status = "partial"
+                        exit_events_by_id[fill.exit_event_id] = ExitEvent(
+                            exit_event_id=old_ee.exit_event_id,
+                            trade_id=old_ee.trade_id,
+                            decision_date=old_ee.decision_date,
+                            reason=old_ee.reason,
+                            reference_price=old_ee.reference_price,
+                            stop_price=old_ee.stop_price,
+                            take_price=old_ee.take_price,
+                            status=new_status,
+                        )
                     if pending_exits[fill.symbol].remaining_shares <= 0:
                         del pending_exits[fill.symbol]
                 # 如果 SELL 完全平仓，移除 trade_id 以便下次建仓时生成新 ID
@@ -264,6 +281,17 @@ def run(
                             take_price=take_px,
                             remaining_shares=shares,
                         )
+                        # 创建 ExitEvent 跟踪
+                        exit_events_by_id[ee_id] = ExitEvent(
+                            exit_event_id=ee_id,
+                            trade_id=trade_id,
+                            decision_date=date,
+                            reason=reason,
+                            reference_price=ref_px,
+                            stop_price=stop_px,
+                            take_price=take_px,
+                            status="pending",
+                        )
         else:
             pending = targets.get(date)
             # 处理静态目标中的退出信号
@@ -287,6 +315,17 @@ def run(
                             take_price=take_px,
                             remaining_shares=shares,
                         )
+                        # 创建 ExitEvent 跟踪
+                        exit_events_by_id[ee_id] = ExitEvent(
+                            exit_event_id=ee_id,
+                            trade_id=trade_id,
+                            decision_date=date,
+                            reason=reason,
+                            reference_price=ref_px,
+                            stop_price=stop_px,
+                            take_price=take_px,
+                            status="pending",
+                        )
 
     # 最后一日未执行的决策显式留痕
     if pending is not None and dates:
@@ -307,6 +346,19 @@ def run(
                 filled_shares=0,
                 reason=f"PENDING_EXIT_{ei.reason}_INCOMPLETE",
             ))
+            # 标记 ExitEvent 为 abandoned
+            if ei.exit_event_id in exit_events_by_id:
+                old_ee = exit_events_by_id[ei.exit_event_id]
+                exit_events_by_id[ei.exit_event_id] = ExitEvent(
+                    exit_event_id=old_ee.exit_event_id,
+                    trade_id=old_ee.trade_id,
+                    decision_date=old_ee.decision_date,
+                    reason=old_ee.reason,
+                    reference_price=old_ee.reference_price,
+                    stop_price=old_ee.stop_price,
+                    take_price=old_ee.take_price,
+                    status="abandoned",
+                )
 
     # 从实际成交事件流构建交易生命周期与分配关系
     trades, allocations = build_trades(fills, dates, run_id=cfg.run_id, orders=orders)
@@ -346,5 +398,5 @@ def run(
         costs=cost_total,
         metrics=metrics,
         deviations=deviations,
-        exit_events=exit_events,
+        exit_events=list(exit_events_by_id.values()),
     )

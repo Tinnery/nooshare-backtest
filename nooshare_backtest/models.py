@@ -354,6 +354,7 @@ class BacktestResult:
     costs: CostSummary = field(default_factory=CostSummary)
     metrics: dict[str, float] = field(default_factory=dict)
     deviations: list[TargetDeviation] = field(default_factory=list)
+    exit_events: list = field(default_factory=list)
     schema_version: int = SCHEMA_VERSION
 
     def to_dict(self) -> dict[str, Any]:

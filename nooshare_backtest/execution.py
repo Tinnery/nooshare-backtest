@@ -135,6 +135,7 @@ def _order_with_final(
         canonical_id=order.canonical_id, exchange=order.exchange,
         filled_shares=filled,
         exit_event_id=order.exit_event_id,
+        trade_id=order.trade_id,
         decision_reason=order.decision_reason,
     )
 
