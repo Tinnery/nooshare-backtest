@@ -105,9 +105,14 @@ def plan_orders(
         want = _round_shares(target_value / px, cfg) if px > 0 else 0
         have = portfolio.shares_of(symbol)
         delta = want - have
-        if delta == 0:
+        # px==0 表示执行日无行情：即使 delta==0 也生成订单，
+        # 由 execute_orders 判 NO_MARKET_DATA 显式留痕（E12：缺失行情不得静默）。
+        if delta == 0 and px > 0:
             continue
-        side = "BUY" if delta > 0 else "SELL"
+        if delta == 0 and px == 0 and weight <= 0:
+            continue  # 无目标权重、无持仓、无行情：无信息价值
+        # delta==0 且无行情时按目标意图定方向（买入意图无法定价 -> BUY 留痕）
+        side = "BUY" if (delta > 0 or (delta == 0 and weight > 0)) else "SELL"
         decision_id, signal_id = _identity(target, symbol)
         oid = event_id(run_id, "order", date, idx)
         orders.append(Order(
