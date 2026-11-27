@@ -40,7 +40,7 @@ def normalize_bars(source: Mapping[int, Any] | Iterable[Any]) -> dict[int, dict[
             limit_up_ratio=(float(item["limit_up_ratio"]) if item.get("limit_up_ratio") is not None else None),
             limit_down_ratio=(float(item["limit_down_ratio"]) if item.get("limit_down_ratio") is not None else None),
             no_limit=bool(item.get("no_limit", False)),
-            limit_rule_source=str(item.get("limit_rule_source", "")),
+            limit_rule_source=(str(item.get("limit_rule_source")).strip() if item.get("limit_rule_source") is not None else ""),
             is_limit_up=bool(item.get("is_limit_up", False)),
             is_limit_down=bool(item.get("is_limit_down", False)),
             is_st=bool(item.get("is_st", False)),
