@@ -61,6 +61,10 @@ def result_to_runpackage(result, signals):
     }
 
 
+@unittest.skipUnless(
+    NS.is_file(),
+    "cross-repo contract tests require a sibling nooshare/backend/app/runpackage.py checkout",
+)
 class TestCrossRepoIntegration(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
