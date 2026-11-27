@@ -11,6 +11,7 @@ T+1 按「买入批次」判断：每笔买入形成独立 lot，含 bought_date
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from math import isfinite
 
 from .models import Bar, EquityPoint, Fill, LedgerEntry, PositionSnapshot, PositionView
 
