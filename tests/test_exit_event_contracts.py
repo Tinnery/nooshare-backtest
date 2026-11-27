@@ -248,7 +248,7 @@ class TestExitEventContracts(unittest.TestCase):
         def strategy(ctx: DecisionContext):
             if ctx.date == D1:
                 return TargetPortfolio(decision_date=D1, weights={SYM: 0.1})
-            if ctx.date == D3:
+            if ctx.date == D2:
                 return TargetPortfolio(
                     decision_date=D3, weights={},
                     exit_signals={SYM: ("STOP_LOSS", 9.0, 9.0, 0.0)},
@@ -478,7 +478,7 @@ class TestExitEventContracts(unittest.TestCase):
         def strategy(ctx: DecisionContext):
             if ctx.date == D1:
                 return TargetPortfolio(decision_date=D1, weights={SYM: 0.1})
-            if ctx.date == D2:
+            if ctx.date == D3:
                 return TargetPortfolio(
                     decision_date=D3, weights={},
                     exit_signals={SYM: ("STOP_LOSS", 9.0, 9.0, 0.0)},
