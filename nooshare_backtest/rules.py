@@ -1,6 +1,6 @@
 """A 股 NEXT_OPEN 执行规则。
 
-价格限制只根据 Raw open、Raw previous close 和调用方解析的执行日 PIT 比例判断。
+价格限制只根据 Raw open、交易所涨跌停参考价（除权除息日需调整）和调用方解析的执行日 PIT 比例判断。
 收盘 is_limit_up/is_limit_down 标记不代表当日开盘不可成交；HFQ return 也不参与执行拒绝。
 """
 from __future__ import annotations
