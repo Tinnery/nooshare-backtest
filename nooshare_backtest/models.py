@@ -81,20 +81,23 @@ class Bar:
     high: float | None        # Raw high; execution only / reporting
     low: float | None         # Raw low; execution only / reporting
     close: float | None       # Raw close; fallback mark only
+    # Keep the original constructor field order through exchange so existing
+    # positional Bar callers do not reinterpret old status flags as new prices.
     volume: float | None = None
     ret: float | None = None  # HFQ return; informational only
-    mark_price: float | None = None  # HFQ close; NAV mark only
-    pre_close: float | None = None   # Previous-session Raw close
-    limit_up_ratio: float | None = None
-    limit_down_ratio: float | None = None
-    no_limit: bool = False    # Effective-dated rule says no daily price limit
-    limit_rule_source: str = ""  # e.g. pit_table / derived; blank means unknown
     is_suspended: bool = False
     is_limit_up: bool = False     # Close state only; never used for open execution
     is_limit_down: bool = False   # Close state only; never used for open execution
     is_st: bool = False
     canonical_id: str = ""
     exchange: str = ""
+    # New dual-price/PIT fields are appended and should be passed by keyword.
+    mark_price: float | None = None  # HFQ close; NAV mark only
+    pre_close: float | None = None   # Previous-session Raw close
+    limit_up_ratio: float | None = None
+    limit_down_ratio: float | None = None
+    no_limit: bool = False    # Effective-dated rule says no daily price limit
+    limit_rule_source: str = ""  # e.g. pit_table / derived; blank means unknown
 
 
 # ---------- 输入：策略决策 ----------
