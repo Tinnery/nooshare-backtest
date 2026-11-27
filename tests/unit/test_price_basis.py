@@ -137,3 +137,15 @@ def test_ex_right_limit_uses_adjusted_reference_not_previous_raw_close():
         up=0.10, down=0.10, ret=0.0,
     )
     assert rules.can_buy(wrong_reference) == ""
+
+
+def test_minimal_example_still_produces_a_next_session_buy_fill():
+    from examples.minimal_run import build_example_result
+
+    result = build_example_result()
+
+    buy_fills = [fill for fill in result.fills if fill.side == "BUY"]
+    assert len(buy_fills) == 1
+    assert buy_fills[0].date == 20240103
+    assert buy_fills[0].price > 10.2
+    assert buy_fills[0].shares > 0
