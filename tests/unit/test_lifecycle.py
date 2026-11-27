@@ -93,7 +93,7 @@ class TestTradeLifecycle(unittest.TestCase):
         orders = [o for o in r.orders if o.side == "BUY"]
         self.assertTrue(orders)
         self.assertTrue(all(o.status == "REJECTED" for o in orders))
-        self.assertTrue(all(o.reason == "LIMIT_UP" for o in orders))
+        self.assertTrue(all(o.reason == "OPEN_LIMIT_UP" for o in orders))
         self.assertEqual(r.fills, [])
         self.assertEqual(r.trades, [])
 
@@ -101,12 +101,12 @@ class TestTradeLifecycle(unittest.TestCase):
         """两只股票竞争有限现金：先买的成交后，第二只只能部分成交。"""
         bars = {
             D1: {
-                "sh600519": Bar(D1, "sh600519", 10, 10, 10, 10, volume=1e6),
-                "sz000001": Bar(D1, "sz000001", 10, 10, 10, 10, volume=1e6),
+                "sh600519": Bar(D1, "sh600519", 10, 10, 10, 10, volume=1e6, pre_close=10, limit_up_ratio=0.10, limit_down_ratio=0.10, limit_rule_source="fixture_pit"),
+                "sz000001": Bar(D1, "sz000001", 10, 10, 10, 10, volume=1e6, pre_close=10, limit_up_ratio=0.10, limit_down_ratio=0.10, limit_rule_source="fixture_pit"),
             },
             D2: {
-                "sh600519": Bar(D2, "sh600519", 10, 10, 10, 10, volume=1e6),
-                "sz000001": Bar(D2, "sz000001", 10, 10, 10, 10, volume=1e6),
+                "sh600519": Bar(D2, "sh600519", 10, 10, 10, 10, volume=1e6, pre_close=10, limit_up_ratio=0.10, limit_down_ratio=0.10, limit_rule_source="fixture_pit"),
+                "sz000001": Bar(D2, "sz000001", 10, 10, 10, 10, volume=1e6, pre_close=10, limit_up_ratio=0.10, limit_down_ratio=0.10, limit_rule_source="fixture_pit"),
             },
         }
         tgts = decisions((D1, {"sh600519": 0.9, "sz000001": 0.9}))

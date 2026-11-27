@@ -74,7 +74,10 @@ class TestEngineIntegration(unittest.TestCase):
             "run_id": "cli-fixture",
             "bars": [
                 {"date": d, "symbol": s, "open": b.open, "high": b.high,
-                 "low": b.low, "close": b.close, "volume": b.volume, "ret": b.ret}
+                 "low": b.low, "close": b.close, "volume": b.volume, "ret": b.ret,
+                 "mark_price": b.mark_price, "pre_close": b.pre_close,
+                 "limit_up_ratio": b.limit_up_ratio, "limit_down_ratio": b.limit_down_ratio,
+                 "no_limit": b.no_limit, "limit_rule_source": b.limit_rule_source}
                 for d, day in sample_bars().items() for s, b in day.items()
             ],
             "decisions": [

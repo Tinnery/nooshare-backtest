@@ -16,7 +16,8 @@ def _bar(date: int, symbol: str, o: float, h: float, l: float, c: float, ret: fl
     prev_close = c if ret is None else c / (1 + ret)
     return Bar(
         date=date, symbol=symbol, open=o, high=h, low=l, close=c,
-        volume=1_000_000.0, ret=ret,
+        volume=1_000_000.0, ret=ret, pre_close=prev_close,
+        limit_up_ratio=0.10, limit_down_ratio=0.10, limit_rule_source="fixture_pit",
         canonical_id=symbol[2:], exchange=symbol[:2],
     )
 

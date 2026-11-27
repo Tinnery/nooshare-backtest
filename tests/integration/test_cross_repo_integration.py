@@ -31,11 +31,11 @@ def load_runpackage_module():
 def make_result():
     s = "sh600519"
     bars = {
-        D1: {s: Bar(D1, s, 10, 10, 10, 10, volume=1e6, canonical_id="600519", exchange="sh")},
-        D2: {s: Bar(D2, s, 10, 10.2, 9.9, 10.1, volume=1e6, canonical_id="600519", exchange="sh")},
-        D3: {s: Bar(D3, s, 10.2, 10.4, 10.0, 10.3, volume=1e6, canonical_id="600519", exchange="sh")},
-        D4: {s: Bar(D4, s, 10.4, 10.4, 10.2, 10.3, volume=1e6, canonical_id="600519", exchange="sh")},
-        D5: {s: Bar(D5, s, 10.3, 10.3, 10.1, 10.2, volume=1e6, canonical_id="600519", exchange="sh")},
+        D1: {s: Bar(D1, s, 10, 10, 10, 10, volume=1e6, pre_close=10, limit_up_ratio=0.10, limit_down_ratio=0.10, limit_rule_source="fixture_pit", canonical_id="600519", exchange="sh")},
+        D2: {s: Bar(D2, s, 10, 10.2, 9.9, 10.1, volume=1e6, pre_close=10, limit_up_ratio=0.10, limit_down_ratio=0.10, limit_rule_source="fixture_pit", canonical_id="600519", exchange="sh")},
+        D3: {s: Bar(D3, s, 10.2, 10.4, 10.0, 10.3, volume=1e6, pre_close=10.1, limit_up_ratio=0.10, limit_down_ratio=0.10, limit_rule_source="fixture_pit", canonical_id="600519", exchange="sh")},
+        D4: {s: Bar(D4, s, 10.4, 10.4, 10.2, 10.3, volume=1e6, pre_close=10.3, limit_up_ratio=0.10, limit_down_ratio=0.10, limit_rule_source="fixture_pit", canonical_id="600519", exchange="sh")},
+        D5: {s: Bar(D5, s, 10.3, 10.3, 10.1, 10.2, volume=1e6, pre_close=10.3, limit_up_ratio=0.10, limit_down_ratio=0.10, limit_rule_source="fixture_pit", canonical_id="600519", exchange="sh")},
     }
     targets = {
         D1: TargetPortfolio(D1, {s: 0.5}, signal_ids={s: "sig-e2e-1"}),

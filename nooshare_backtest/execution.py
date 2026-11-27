@@ -13,13 +13,14 @@ fill_id 由 order_id 与序号生成。信号引用（signal_id）从 TargetPort
 from __future__ import annotations
 
 from dataclasses import dataclass
+from math import isfinite
 
 from .accounting import Portfolio
 from .costs import CostModel
 from .models import Bar, Fill, Order, TargetDeviation, TargetPortfolio, event_id
 
 # Re-export for clarity; used to stamp trade_id onto BUY fills before apply_fill.
-from .rules import RuleSet
+from .rules import R_NO_DATA, R_NO_RAW_OPEN, RuleSet
 
 LOT = 100
 
@@ -72,18 +73,22 @@ def plan_orders(
     if pending_exits:
         for symbol, exit_info in pending_exits.items():
             bar = bars.get(symbol)
-            if bar is None:
-                continue
             shares = portfolio.shares_of(symbol)
             if shares <= 0:
                 continue
             oid = event_id(run_id, "order", date, f"exit_{symbol}")
+            unavailable = R_NO_DATA if bar is None else (
+                R_NO_RAW_OPEN if bar.open is None or not isfinite(float(bar.open)) or float(bar.open) <= 0 else ""
+            )
             orders.append(Order(
                 date=date, symbol=symbol, side="SELL",
                 requested_shares=shares, target_weight=0.0,
+                status=ORDER_SKIPPED if unavailable else ORDER_PENDING,
+                reason=unavailable,
                 order_id=oid, signal_id="",
                 decision_date=target.decision_date,
-                canonical_id=bar.canonical_id, exchange=bar.exchange,
+                canonical_id=bar.canonical_id if bar else "",
+                exchange=bar.exchange if bar else "",
                 exit_event_id=exit_info["exit_event_id"],
                 trade_id=trade_ids.get(symbol, "") if trade_ids else "",
                 decision_reason=exit_info["reason"],
@@ -100,10 +105,29 @@ def plan_orders(
     for idx, symbol in enumerate(symbols):
         weight = target.weights.get(symbol, 0.0)
         bar = bars.get(symbol)
-        px = bar.open if bar and bar.open > 0 else 0.0
-        target_value = weight * total_asset
-        want = _round_shares(target_value / px, cfg) if px > 0 else 0
         have = portfolio.shares_of(symbol)
+        if weight <= 0 and have <= 0:
+            continue
+        if bar is None or bar.open is None or not isfinite(float(bar.open)) or float(bar.open) <= 0:
+            unavailable = R_NO_DATA if bar is None else R_NO_RAW_OPEN
+            decision_id, signal_id = _identity(target, symbol)
+            oid = event_id(run_id, "order", date, idx)
+            # If the target is to exit, retain the intended current quantity. For a buy/rebalance,
+            # the desired quantity cannot be sized without an executable Raw open.
+            requested = have if weight <= 0 else 0
+            orders.append(Order(
+                date=date, symbol=symbol, side=("SELL" if weight <= 0 and have > 0 else "BUY"),
+                requested_shares=requested, target_weight=weight,
+                status=ORDER_SKIPPED, reason=unavailable,
+                order_id=oid, signal_id=signal_id,
+                decision_date=target.decision_date,
+                canonical_id=bar.canonical_id if bar else "",
+                exchange=bar.exchange if bar else "",
+            ))
+            continue
+        px = float(bar.open)  # Raw execution open only
+        target_value = weight * total_asset
+        want = _round_shares(target_value / px, cfg)
         delta = want - have
         if delta == 0:
             continue
@@ -180,8 +204,18 @@ def execute_orders(
     final_orders: list[Order] = []
     deviations: list[TargetDeviation] = []
 
+    # Planning-time missing-market-data outcomes are retained, never silently dropped.
+    for order in orders:
+        if order.status != ORDER_PENDING:
+            final_orders.append(order)
+            deviations.append(TargetDeviation(
+                date=date, symbol=order.symbol, target_weight=order.target_weight,
+                target_shares=order.requested_shares, filled_shares=0,
+                reason=order.reason or "ORDER_NOT_PENDING",
+            ))
+
     # 先处理卖出
-    for seq, order in enumerate([o for o in orders if o.side == "SELL"]):
+    for seq, order in enumerate([o for o in orders if o.side == "SELL" and o.status == ORDER_PENDING]):
         bar = bars.get(order.symbol)
         reason = rules.can_sell(bar, not bool(portfolio.sellable_shares(order.symbol, date)))
         sellable = portfolio.sellable_shares(order.symbol, date)
@@ -207,7 +241,7 @@ def execute_orders(
                                               "T_PLUS_1" if sellable < order.requested_shares else "PARTIAL_SELL"))
 
     # 再处理买入（受现金约束）
-    for seq, order in enumerate([o for o in orders if o.side == "BUY"]):
+    for seq, order in enumerate([o for o in orders if o.side == "BUY" and o.status == ORDER_PENDING]):
         bar = bars.get(order.symbol)
         reason = rules.can_buy(bar)
         if reason:

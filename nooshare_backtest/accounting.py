@@ -141,7 +141,16 @@ class Portfolio:
         snaps: list[PositionSnapshot] = []
         for symbol, pos in sorted(self.positions.items()):
             bar = bars.get(symbol)
-            px = bar.close if bar and bar.close > 0 else pos.avg_cost
+            # HFQ is the primary research mark. The documented fallback is Raw close,
+            # then the last known cost when both market marks are unavailable.
+            mark = bar.mark_price if bar and bar.mark_price is not None else None
+            raw_close = bar.close if bar else None
+            if mark is not None and isfinite(float(mark)) and float(mark) > 0:
+                px = float(mark)
+            elif raw_close is not None and isfinite(float(raw_close)) and float(raw_close) > 0:
+                px = float(raw_close)
+            else:
+                px = pos.avg_cost
             mv = px * pos.shares
             market_value += mv
             snaps.append(PositionSnapshot(
@@ -161,6 +170,6 @@ class Portfolio:
         )
         self.ledger.append(LedgerEntry(
             date=date, kind="MARK", cash_delta=0.0,
-            note=f"total={point.total_asset} nav={point.nav}",
+            note=f"total={point.total_asset} nav={point.nav} mark_basis_policy=HFQ_THEN_RAW_CLOSE_THEN_AVG_COST",
         ))
         return point, snaps

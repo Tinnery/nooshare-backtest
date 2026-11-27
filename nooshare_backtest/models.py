@@ -68,23 +68,30 @@ def _coerce(cls, data: dict[str, Any], renames: dict[str, str] | None = None):
 
 @dataclass(frozen=True)
 class Bar:
-    """单只证券单个交易日的行情。价格为后复权(hfq)口径。
+    """单只证券单个交易日的双价格口径行情。
 
-    is_suspended / is_limit_up / is_limit_down / is_st 为当日交易状态，
-    用于 A 股交易规则判定。ret 为当日后复权收益（可选）。
-    canonical_id / exchange 有身份信息时保留，禁止由代码前缀推断。
+    open/high/low/close 始终为 Raw 可交易价格；mark_price 是 HFQ 收盘估值价，
+    只用于 NAV / PositionSnapshot。pre_close 是同一证券上一交易日 Raw 收盘价。
+    涨跌停比例必须由调用方按执行日 PIT 规则解析后提供；无法解析时引擎拒绝成交。
+    is_limit_up / is_limit_down 仅保留为收盘状态信息，不参与 NEXT_OPEN 成交判定。
     """
     date: int                 # YYYYMMDD
     symbol: str
-    open: float
-    high: float
-    low: float
-    close: float
-    volume: float | None = None   # None=未知，此时仅按 is_suspended 判定；0 视为停牌
-    ret: float | None = None
+    open: float | None        # Raw open; execution only
+    high: float | None        # Raw high; execution only / reporting
+    low: float | None         # Raw low; execution only / reporting
+    close: float | None       # Raw close; fallback mark only
+    volume: float | None = None
+    ret: float | None = None  # HFQ return; informational only
+    mark_price: float | None = None  # HFQ close; NAV mark only
+    pre_close: float | None = None   # Previous-session Raw close
+    limit_up_ratio: float | None = None
+    limit_down_ratio: float | None = None
+    no_limit: bool = False    # Effective-dated rule says no daily price limit
+    limit_rule_source: str = ""  # e.g. pit_table / derived; blank means unknown
     is_suspended: bool = False
-    is_limit_up: bool = False
-    is_limit_down: bool = False
+    is_limit_up: bool = False     # Close state only; never used for open execution
+    is_limit_down: bool = False   # Close state only; never used for open execution
     is_st: bool = False
     canonical_id: str = ""
     exchange: str = ""
@@ -262,13 +269,13 @@ class LedgerEntry:
 
 @dataclass(frozen=True)
 class PositionSnapshot:
-    """某交易日收盘的实际持仓。"""
+    """某交易日收盘持仓快照。avg_cost / Trade PnL 为 Raw 成交成本；last_price 优先为 HFQ mark。"""
     date: int
     symbol: str
     shares: int
-    avg_cost: float           # 含买入成本的每股成本
-    last_price: float
-    market_value: float
+    avg_cost: float           # Raw 成交口径，含买入成本
+    last_price: float         # HFQ mark；缺失时按契约回退 Raw close / avg_cost
+    market_value: float       # last_price × shares，研究估值口径
 
 
 @dataclass(frozen=True)

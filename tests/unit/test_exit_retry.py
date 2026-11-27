@@ -30,7 +30,10 @@ def _bar(date: int, symbol: str, o: float, h: float, l: float, c: float,
          ret: float | None = None, is_limit_down: bool = False) -> Bar:
     return Bar(
         date=date, symbol=symbol, open=o, high=h, low=l, close=c,
-        volume=1_000_000.0, ret=ret, is_limit_down=is_limit_down,
+        volume=1_000_000.0, ret=ret,
+        pre_close=(o / 0.90 if is_limit_down else o),
+        limit_up_ratio=0.10, limit_down_ratio=0.10, limit_rule_source="fixture_pit",
+        is_limit_down=is_limit_down,
         canonical_id=symbol[2:], exchange=symbol[:2],
     )
 
@@ -222,7 +225,7 @@ def test_limit_down_rejection_then_retry():
 
     result = run(bars, decide, EngineConfig(run_id="test-retry"))
     # T3 跌停拒绝
-    rejected_orders = [o for o in result.orders if o.status == "REJECTED" and o.reason == "LIMIT_DOWN"]
+    rejected_orders = [o for o in result.orders if o.status == "REJECTED" and o.reason == "OPEN_LIMIT_DOWN"]
     assert len(rejected_orders) >= 1, "应有跌停拒绝的订单"
     # T4 回调时 pending_exit 仍在
     assert pending_exit_seen_on_retry, "跌停拒绝后 pending_exit 应在下次回调时仍存在"

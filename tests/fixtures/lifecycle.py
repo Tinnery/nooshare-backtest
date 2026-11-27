@@ -12,9 +12,13 @@ D1, D2, D3, D4, D5, D6 = 20240102, 20240103, 20240104, 20240105, 20240108, 20240
 
 def _bar(date, symbol, o, c, *, volume=1_000_000, ret=0.0,
          is_limit_up=False, is_limit_down=False, is_suspended=False,
-         canonical_id="", exchange="") -> Bar:
+         pre_close=None, canonical_id="", exchange="") -> Bar:
+    if pre_close is None:
+        pre_close = o / 1.10 if is_limit_up else (o / 0.90 if is_limit_down else o)
     return Bar(date=date, symbol=symbol, open=o, high=max(o, c) * 1.01,
                low=min(o, c) * 0.99, close=c, volume=volume, ret=ret,
+               pre_close=pre_close, limit_up_ratio=0.10, limit_down_ratio=0.10,
+               limit_rule_source="fixture_pit",
                is_limit_up=is_limit_up, is_limit_down=is_limit_down,
                is_suspended=is_suspended,
                canonical_id=canonical_id or symbol[-6:],

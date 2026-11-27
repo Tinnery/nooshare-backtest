@@ -45,6 +45,8 @@ def _bar(date, symbol, o, c, *, volume=1_000_000, ret=0.0,
         date=date, symbol=symbol,
         open=o, high=max(o, c) * 1.01, low=min(o, c) * 0.99, close=c,
         volume=volume, ret=ret,
+        pre_close=(o / 0.90 if is_limit_down else (o / 1.10 if is_limit_up else o)),
+        limit_up_ratio=0.10, limit_down_ratio=0.10, limit_rule_source="fixture_pit",
         is_limit_down=is_limit_down, is_limit_up=is_limit_up,
         canonical_id=symbol[-6:],
         exchange="sh" if symbol.startswith("sh") else "sz",
@@ -223,8 +225,8 @@ class TestExitEventContracts(unittest.TestCase):
         for order in rejected_sells:
             self.assertEqual(order.trade_id, position_trade_id,
                              "被拒绝的 SELL 仍应携带正确的 trade_id")
-            self.assertIn("LIMIT_DOWN", order.reason,
-                          "拒绝原因应为 LIMIT_DOWN")
+            self.assertIn("OPEN_LIMIT_DOWN", order.reason,
+                          "拒绝原因应为 OPEN_LIMIT_DOWN")
 
     # ------------------------------------------------------------------ #
     # 契约 6：Rejected SELL 没有 Fill，但仍能关联 Trade 和 ExitEvent

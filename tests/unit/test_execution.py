@@ -9,7 +9,9 @@ from nooshare_backtest.rules import R_T_PLUS_1, RuleSet
 
 def bar(px=10.0, **kwargs):
     base = dict(date=20240103, symbol="AAA", open=px, high=px * 1.01,
-                low=px * 0.99, close=px, volume=100_000, ret=0.0)
+                low=px * 0.99, close=px, volume=100_000, ret=0.0,
+                pre_close=px, limit_up_ratio=0.10, limit_down_ratio=0.10,
+                limit_rule_source="fixture_pit")
     base.update(kwargs)
     return Bar(**base)
 
@@ -52,13 +54,13 @@ class TestExecution(unittest.TestCase):
 
     def test_blocked_buy_records_reason(self):
         p = Portfolio(cash=100_000.0)
-        bars = {"AAA": bar(is_limit_up=True)}
+        bars = {"AAA": bar(px=11.0, pre_close=10.0)}
         orders = [Order(20240103, "AAA", "BUY", 1_000, 0.5)]
         fills, final, devs = execute_orders(orders, p, bars, 20240103,
                                             self.rules, self.costs, self.cfg)
         self.assertEqual(fills, [])
-        self.assertEqual(final[0].reason, "LIMIT_UP")
-        self.assertEqual(devs[0].reason, "LIMIT_UP")
+        self.assertEqual(final[0].reason, "OPEN_LIMIT_UP")
+        self.assertEqual(devs[0].reason, "OPEN_LIMIT_UP")
 
     def test_plan_orders_uses_execution_date(self):
         from nooshare_backtest.execution import plan_orders

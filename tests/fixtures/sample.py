@@ -16,7 +16,9 @@ def sample_bars() -> dict[int, dict[str, Bar]]:
     return {
         date: {
             sym: Bar(date=date, symbol=sym, open=o, high=h, low=l, close=c,
-                     volume=1_000_000, ret=r)
+                     volume=1_000_000, ret=r, pre_close=o,
+                     limit_up_ratio=0.10, limit_down_ratio=0.10,
+                     limit_rule_source="fixture_pit")
             for sym, (o, h, l, c, r) in day.items()
         }
         for date, day in raw.items()
