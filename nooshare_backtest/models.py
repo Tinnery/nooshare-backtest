@@ -71,7 +71,7 @@ class Bar:
     """单只证券单个交易日的双价格口径行情。
 
     open/high/low/close 始终为 Raw 可交易价格；mark_price 是 HFQ 收盘估值价，
-    只用于 NAV / PositionSnapshot。pre_close 是同一证券上一交易日 Raw 收盘价。
+    只用于 NAV / PositionSnapshot。pre_close 是执行日交易所涨跌停参考价：普通日通常等于上一交易日 Raw 收盘价，除权除息日必须使用交易所调整后的参考价。
     涨跌停比例必须由调用方按执行日 PIT 规则解析后提供；无法解析时引擎拒绝成交。
     is_limit_up / is_limit_down 仅保留为收盘状态信息，不参与 NEXT_OPEN 成交判定。
     """
