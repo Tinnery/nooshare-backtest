@@ -29,6 +29,7 @@ from .models import (
     EXIT_STOP_LOSS,
     EXIT_TAKE_PROFIT,
     ExitEvent,
+    Fill,
     Order,
     PositionView,
     RunMetadata,
@@ -241,7 +242,7 @@ def run(
         positions.extend(snaps)
         last_total_asset = point.total_asset
 
-        # 3) 收盘后接收当日决策，留待下一交易日执行
+        # 3) 收盘后接收当日决策，立即执行退出信号
         if callable(targets):
             # 构造 pending_exits 快照给策略
             exit_snapshots = tuple(
@@ -268,7 +269,7 @@ def run(
                 pending_exits=exit_snapshots,
             )
             pending = targets(ctx)
-            # 处理策略返回的退出信号
+            # 处理策略返回的退出信号：立即以收盘价执行
             if pending and pending.exit_signals:
                 for symbol, (reason, ref_px, stop_px, take_px, trigger_type) in pending.exit_signals.items():
                     if symbol not in pending_exits:
@@ -289,7 +290,7 @@ def run(
                             stop_price=stop_px,
                             take_price=take_px,
                             remaining_shares=shares,
-                        trigger_type=trigger_type,
+                            trigger_type=trigger_type,
                         )
                         # 创建 ExitEvent 跟踪
                         exit_events_by_id[ee_id] = ExitEvent(
@@ -302,6 +303,89 @@ def run(
                             take_price=take_px,
                             status="pending",
                         )
+                        # 立即以收盘价执行退出订单
+                        if shares > 0:
+                            bar = day_bars.get(symbol)
+                            if bar:
+                                # 确定成交价格：touch 用阈值价，gap 用收盘价
+                                if trigger_type == "touch":
+                                    exec_price = take_px if reason == "TAKE_PROFIT" else stop_px
+                                else:  # gap
+                                    exec_price = bar.close
+                                # 创建订单
+                                oid = event_id(cfg.run_id, "order", date, f"exit_{symbol}")
+                                order = Order(
+                                    date=date,
+                                    symbol=symbol,
+                                    side="SELL",
+                                    requested_shares=shares,
+                                    target_weight=0.0,
+                                    order_id=oid,
+                                    signal_id="",
+                                    decision_date=date,
+                                    canonical_id=bar.canonical_id,
+                                    exchange=bar.exchange,
+                                    exit_event_id=ee_id,
+                                    trade_id=trade_id,
+                                    decision_reason=reason,
+                                    trigger_type=trigger_type,
+                                    trigger_price=take_px if reason == "TAKE_PROFIT" else stop_px,
+                                )
+                                orders.append(order)
+                                # 创建成交
+                                bd = cfg.cost_model.breakdown(exec_price, shares, "SELL")
+                                fill = Fill(
+                                    date=date,
+                                    symbol=symbol,
+                                    side="SELL",
+                                    shares=shares,
+                                    price=exec_price,
+                                    commission=bd["commission"],
+                                    stamp_duty=bd["stamp_duty"],
+                                    transfer_fee=bd["transfer_fee"],
+                                    slippage=bd["slippage"],
+                                    fill_id=event_id(oid, "fill", date, 0),
+                                    order_id=oid,
+                                    trade_id=trade_id,
+                                    exit_event_id=ee_id,
+                                    canonical_id=bar.canonical_id,
+                                    exchange=bar.exchange,
+                                )
+                                fills.append(fill)
+                                portfolio.apply_fill(fill)
+                                # 更新退出意图
+                                pending_exits[symbol].remaining_shares -= shares
+                                if pending_exits[symbol].remaining_shares <= 0:
+                                    exit_events_by_id[ee_id] = ExitEvent(
+                                        exit_event_id=ee_id,
+                                        trade_id=trade_id,
+                                        decision_date=date,
+                                        reason=reason,
+                                        reference_price=ref_px,
+                                        stop_price=stop_px,
+                                        take_price=take_px,
+                                        status="complete",
+                                    )
+                                    del pending_exits[symbol]
+                                else:
+                                    exit_events_by_id[ee_id] = ExitEvent(
+                                        exit_event_id=ee_id,
+                                        trade_id=trade_id,
+                                        decision_date=date,
+                                        reason=reason,
+                                        reference_price=ref_px,
+                                        stop_price=stop_px,
+                                        take_price=take_px,
+                                        status="partial",
+                                    )
+                                if portfolio.shares_of(symbol) == 0:
+                                    trade_ids.pop(symbol, None)
+                                cost_total = CostSummary(
+                                    commission=cost_total.commission + fill.commission,
+                                    stamp_duty=cost_total.stamp_duty + fill.stamp_duty,
+                                    transfer_fee=cost_total.transfer_fee + fill.transfer_fee,
+                                    slippage=cost_total.slippage + fill.slippage,
+                                )
         else:
             pending = targets.get(date)
             # 处理静态目标中的退出信号
