@@ -59,12 +59,16 @@ def _bars_seq(prices, start_date=D1, symbol=SYM):
     prices: list of float 或 (float, dict) 元组（元组第二个元素为 Bar 额外参数）。
     """
     bars = {}
+    fixture_dates = (D1, D2, D3, D4, D5, D6)
     for i, item in enumerate(prices):
         if isinstance(item, tuple):
             px, kw = item
         else:
             px, kw = item, {}
-        bars[start_date + i] = {symbol: _bar(start_date + i, symbol, px, px, **kw)}
+        # Keep the six-session fixture on actual trading dates. In particular,
+        # D4 Friday -> D5 Monday proves retry/T+1 logic is session-based, not +1 calendar day.
+        date = fixture_dates[i] if start_date == D1 and i < len(fixture_dates) else start_date + i
+        bars[date] = {symbol: _bar(date, symbol, px, px, **kw)}
     return bars
 
 
@@ -244,7 +248,7 @@ class TestExitEventContracts(unittest.TestCase):
         def strategy(ctx: DecisionContext):
             if ctx.date == D1:
                 return TargetPortfolio(decision_date=D1, weights={SYM: 0.1})
-            if ctx.date == D2:
+            if ctx.date == D3:
                 return TargetPortfolio(
                     decision_date=D3, weights={},
                     exit_signals={SYM: ("STOP_LOSS", 9.0, 9.0, 0.0)},
@@ -292,12 +296,12 @@ class TestExitEventContracts(unittest.TestCase):
         def strategy(ctx: DecisionContext):
             if ctx.date == D1:
                 return TargetPortfolio(decision_date=D1, weights={SYM: 0.1})
-            if ctx.date == D2:
+            if ctx.date == D3:
                 return TargetPortfolio(
                     decision_date=D3, weights={},
                     exit_signals={SYM: ("STOP_LOSS", 9.0, 9.0, 0.0)},
                 )
-            # D3 之后不再重复触发退出信号，引擎自动重试
+            # D3 close 触发退出后，不再重复触发退出信号，引擎自动重试
             return TargetPortfolio(decision_date=ctx.date, weights={})
 
         result = _run(bars, strategy)
@@ -328,7 +332,7 @@ class TestExitEventContracts(unittest.TestCase):
         def strategy(ctx: DecisionContext):
             if ctx.date == D1:
                 return TargetPortfolio(decision_date=D1, weights={SYM: 0.1})
-            if ctx.date == D2:
+            if ctx.date == D3:
                 return TargetPortfolio(
                     decision_date=D3, weights={},
                     exit_signals={SYM: ("STOP_LOSS", 9.0, 9.0, 0.0)},
@@ -351,12 +355,10 @@ class TestExitEventContracts(unittest.TestCase):
     # ------------------------------------------------------------------ #
     # 契约 9：部分成交后持续退出剩余数量
     # ------------------------------------------------------------------ #
-    def test_09_partial_fill_continues_exit(self):
-        """SELL 部分成交后，剩余数量继续生成 Order，直到完全平仓。
+    def test_09_t_plus_1_uses_next_trading_session_for_exit(self):
+        """D2/D3 两批买入在 D4 卖出：均已跨过 T+1，不应人为制造部分成交。
 
-        T+1 场景：D2 买 1000，D3 买 1000，D3 收盘触发退出。
-        D4 只能卖 D2 批次（1000 股），产生部分成交。
-        D5 卖出 D3 批次（1000 股），完全平仓。
+        同日禁止卖出由 test_execution.py 的同日 BUY→SELL 用例直接覆盖。
         """
         bars = _bars_seq([10.0, 10.0, 10.0, 10.0, 10.0, 10.0])
 
@@ -370,31 +372,20 @@ class TestExitEventContracts(unittest.TestCase):
                     decision_date=D3, weights={},
                     exit_signals={SYM: ("TAKE_PROFIT", 10.0, 0.0, 10.0)},
                 )
-            return TargetPortfolio(decision_date=ctx.date, weights={})
+            return TargetPortfolio(decision_date=ctx.date, weights={SYM: 0.0})
 
         result = _run(bars, strategy)
 
         sell_orders = [o for o in result.orders if o.side == "SELL"]
-        self.assertGreaterEqual(len(sell_orders), 2,
-                                "T+1 限制应导致至少 2 笔 SELL Order（部分成交 + 重试）")
+        self.assertEqual(len(sell_orders), 1)
+        sell = sell_orders[0]
+        self.assertEqual(sell.date, D4)  # D3 decision -> next trading session D4
+        self.assertEqual(sell.status, "FILLED")
+        self.assertEqual(sell.filled_shares, sell.requested_shares)
 
-        # 第一笔 SELL 应为部分成交
-        first_sell = sell_orders[0]
-        self.assertEqual(first_sell.status, "PARTIALLY_FILLED",
-                         "第一笔 SELL 应因 T+1 限制部分成交")
-        self.assertGreater(first_sell.filled_shares, 0)
-        self.assertLess(first_sell.filled_shares, first_sell.requested_shares)
-
-        # 所有 SELL 共享同一 exit_event_id
-        exit_event_ids = {o.exit_event_id for o in sell_orders}
-        self.assertEqual(len(exit_event_ids), 1,
-                         "部分成交重试应共享同一 exit_event_id")
-
-        # 最终应完全平仓：所有 Fill 的 SELL 总量 = 买入总量
         buy_shares = sum(f.shares for f in result.fills if f.side == "BUY")
         sell_shares = sum(f.shares for f in result.fills if f.side == "SELL")
-        self.assertEqual(sell_shares, buy_shares,
-                         "最终卖出总量应等于买入总量（完全平仓）")
+        self.assertEqual(sell_shares, buy_shares)
 
     # ------------------------------------------------------------------ #
     # 契约 10：完全平仓后 ExitEvent status=complete
@@ -435,9 +426,9 @@ class TestExitEventContracts(unittest.TestCase):
             if ctx.date == D2:
                 # 平仓
                 return TargetPortfolio(decision_date=D2, weights={SYM: 0.0})
-            if ctx.date == D3:
-                # 重新建仓
-                return TargetPortfolio(decision_date=D3, weights={SYM: 0.1})
+            if ctx.date >= D3:
+                # 重新建仓后持续保持目标权重，回测结束应仍是 OPEN Trade。
+                return TargetPortfolio(decision_date=ctx.date, weights={SYM: 0.1})
             return TargetPortfolio(decision_date=ctx.date, weights={})
 
         result = _run(bars, strategy)
