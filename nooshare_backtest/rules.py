@@ -60,13 +60,15 @@ class LimitRuleResolver:
       code 前缀 '30' -> chi_next；其余 -> main_board。
 
     derived 规则（官方规则 + Phase 0 样本验证）：
-      - 主板 ST（风险警示）5%（上交所 2026-07-06 起主板风险警示调整为 10%）；
+      - 主板 ST（风险警示）5%（沪深交易所 2026-07-06 同日起主板风险警示调整为 10%）；
+        SZ 依据：ST 量化取证报告（design implementation-docs，2026-11-27）证实
+        ju.limit_ratio 在 SZ 主板 ST 区间 2026-07-06 后实测 10.0（6,317 证券日）；
       - BSE 30%（样本 bj920002 2025-02-26 收盘 188.50 = 145×1.30 手算验证）；
       - IPO 无涨跌幅限制期：主板上市首日、STAR/ChiNext 前 5 个交易日、
         BSE 上市首日（样本 600930 首日 +30.5%、601026 +19.8%）。
     """
 
-    SSE_ST_MAIN_10PCT_DATE: int = 20260706   # 上交所主板风险警示 5% -> 10%
+    ST_MAIN_10PCT_DATE: int = 20260706   # 沪深主板风险警示 5% -> 10%（双所同日生效）
     IPO_NO_LIMIT_DAYS: dict = field(default_factory=lambda: {
         "main_board": 1, "star_market": 5, "chi_next": 5, "bse": 1,
     })
@@ -135,9 +137,8 @@ class LimitRuleResolver:
             return 0.20, "derived"
         # 主板
         if is_st:
-            if (exchange or "").lower() == "sh" and exec_date >= self.SSE_ST_MAIN_10PCT_DATE:
-                # 上交所 2026-07-06 起主板风险警示调整为 10%；深交所暂无变更证据，
-                # SZ 主板 ST 维持 5%。报告中披露该 derived 假设。
+            if exec_date >= self.ST_MAIN_10PCT_DATE:
+                # 2026-07-06 双所生效：SH 公告调整；SZ 由 ju.limit_ratio 数据证实同日生效
                 return 0.10, "derived"
             return 0.05, "derived"
         return 0.10, "derived"

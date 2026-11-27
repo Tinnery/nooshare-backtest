@@ -115,8 +115,18 @@ class TestLimitRuleResolver(unittest.TestCase):
     def test_sh_st_main_board_10pct_after_20260706(self):
         r = self.resolver.resolve("sh", "600057", True, 20260706, None)
         self.assertEqual(r.ratio, 0.10)
-        # 深交所主板 ST 仍 5%（无变更证据）
-        self.assertEqual(self.resolver.resolve("sz", "000001", True, 20260706, None).ratio, 0.05)
+
+    def test_sz_st_main_board_10pct_after_20260706(self):
+        """SZ 主板 ST 2026-07-06 后 10%（深交所同日调整，量化报告证实）。
+        依据：st-limit-quantification-report.md — 87 证券 / 6,465 差异日。"""
+        r = self.resolver.resolve("sz", "000972", True, 20260706, None)
+        self.assertEqual(r.ratio, 0.10)
+        self.assertEqual(r.source, "derived")
+
+    def test_st_main_board_5pct_before_20260706_both_exchanges(self):
+        """2026-07-06 前一日（边界）：沪深主板 ST 仍 5%。"""
+        self.assertEqual(self.resolver.resolve("sh", "600057", True, 20260703, None).ratio, 0.05)
+        self.assertEqual(self.resolver.resolve("sz", "000972", True, 20260703, None).ratio, 0.05)
 
     def test_ipo_no_limit_windows(self):
         # 主板首日无限制
