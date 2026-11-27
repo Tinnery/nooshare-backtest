@@ -73,11 +73,11 @@ def test_open_limit_rules_use_raw_open_and_raw_previous_close_not_close_flags():
     normal_open = make_bar(20240103, raw_open=10, pre_close=10, is_limit_up=True)
     assert rules.can_buy(normal_open) == ""
 
-    # At a 10% limit, Raw open at 11 rejects a buy even when the close flag is false.
+    # At a 10% limit-reference price, Raw open at 11 rejects a buy even when the close flag is false.
     limit_up_open = make_bar(20240103, raw_open=11, pre_close=10, is_limit_up=False)
     assert rules.can_buy(limit_up_open) == "OPEN_LIMIT_UP"
 
-    # Raw open at the 10% lower limit rejects a sell even when the close flag is false.
+    # Raw open at the 10% lower reference limit rejects a sell even when the close flag is false.
     limit_down_open = make_bar(20240103, raw_open=9, pre_close=10, is_limit_down=False)
     assert rules.can_sell(limit_down_open, bought_today=False) == "OPEN_LIMIT_DOWN"
 
