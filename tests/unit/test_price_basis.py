@@ -119,3 +119,21 @@ def test_missing_raw_open_is_recorded_as_skipped_order_not_a_fill():
     assert order.reason == R_NO_RAW_OPEN
     assert result.fills == []
     assert any(d.reason == R_NO_RAW_OPEN for d in result.deviations)
+
+
+def test_ex_right_limit_uses_adjusted_reference_not_previous_raw_close():
+    rules = RuleSet()
+    # Previous session Raw close was 10.00, but a 2:1 event factor makes
+    # the ex-right exchange reference price 5.00 for today's limit calculation.
+    ex_right_bar = make_bar(
+        20240619, raw_open=5.50, pre_close=5.00,
+        up=0.10, down=0.10, ret=0.0,
+    )
+    assert rules.can_buy(ex_right_bar) == "OPEN_LIMIT_UP"
+    # If the adapter incorrectly supplied yesterday's unadjusted Raw close (10),
+    # the same open would be incorrectly treated as executable.
+    wrong_reference = make_bar(
+        20240619, raw_open=5.50, pre_close=10.00,
+        up=0.10, down=0.10, ret=0.0,
+    )
+    assert rules.can_buy(wrong_reference) == ""
