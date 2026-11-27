@@ -79,17 +79,14 @@ jobs:
           excluded = []
 
           entries = subprocess.check_output(
-              [
-                  "git", "ls-files", "--stage",
-                  "--format=%(objectmode)%x09%(objectname)%x09%(stage)%x09%(path)",
-                  "-z",
-              ]
+              ["git", "ls-files", "-s", "-z"]
           ).split(b"\0")
 
           for entry in entries:
               if not entry:
                   continue
-              mode, _blob, _stage, raw_path = entry.split(b"\t", 3)
+              metadata, raw_path = entry.split(b"\t", 1)
+              mode, _blob, _stage = metadata.decode("ascii").split()
               path = raw_path.decode("utf-8", errors="strict")
               rel = PurePosixPath(path)
               parts = tuple(part.lower() for part in rel.parts)
