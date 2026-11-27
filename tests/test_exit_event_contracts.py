@@ -199,15 +199,15 @@ class TestExitEventContracts(unittest.TestCase):
     # ------------------------------------------------------------------ #
     # 契约 5：Rejected SELL Order 携带 trade_id
     # ------------------------------------------------------------------ #
-    def test_05_exit_executes_same_day(self):
-        """退出信号在当天收盘时立即执行，不再延迟到下一交易日。"""
-        # D2 买入，D3 触发止损，D3 收盘时立即执行卖出
+    def test_05_rejected_sell_carries_trade_id(self):
+        """跌停场景：SELL Order 被拒绝，但 trade_id 仍然正确。"""
+        # D2 买入，D3 跌停（SELL 被拒），D4 正常卖出
         bars = _bars_seq([
             10.0,           # D1
             10.0,           # D2 买入
-            8.5,            # D3 触发止损并立即执行
-            8.0,            # D4
-            8.0,            # D5
+            (9.0, {"is_limit_down": True}),  # D3 跌停
+            9.0,            # D4 正常
+            9.0,            # D5
         ])
         position_trade_id = None
 
@@ -227,14 +227,15 @@ class TestExitEventContracts(unittest.TestCase):
 
         result = _run(bars, strategy)
 
-        # 退出信号在 D3 收盘时立即执行，不再延迟到 D4
-        sell_orders = [o for o in result.orders if o.side == "SELL"]
-        self.assertTrue(sell_orders, "应有 SELL Order")
+        rejected_sells = [o for o in result.orders
+                          if o.side == "SELL" and o.status == "REJECTED"]
+        self.assertTrue(rejected_sells, "跌停应产生被拒绝的 SELL Order")
         self.assertIsNotNone(position_trade_id)
-        for order in sell_orders:
+        for order in rejected_sells:
             self.assertEqual(order.trade_id, position_trade_id,
-                             "SELL 应携带正确的 trade_id")
-            self.assertEqual(order.date, D2, "退出应在 D2 当天执行")
+                             "被拒绝的 SELL 仍应携带正确的 trade_id")
+            self.assertIn("LIMIT_DOWN", order.reason,
+                          "拒绝原因应为 LIMIT_DOWN")
 
     # ------------------------------------------------------------------ #
     # 契约 6：Rejected SELL 没有 Fill，但仍能关联 Trade 和 ExitEvent
