@@ -20,6 +20,24 @@ def make_bar(date, *, raw_open=10.0, raw_close=10.0, hfq_mark=10.0,
     )
 
 
+def test_legacy_positional_bar_arguments_keep_the_original_field_order():
+    # Before the dual-price contract, positional fields after ret were:
+    # is_suspended, is_limit_up, is_limit_down, is_st, canonical_id, exchange.
+    bar = Bar(
+        20240103, "AAA", 10.0, 10.1, 9.9, 10.0,
+        1000.0, 0.01, True, False, True, False, "canonical-aaa", "sh",
+    )
+
+    assert bar.is_suspended is True
+    assert bar.is_limit_up is False
+    assert bar.is_limit_down is True
+    assert bar.is_st is False
+    assert bar.canonical_id == "canonical-aaa"
+    assert bar.exchange == "sh"
+    assert bar.mark_price is None
+    assert bar.pre_close is None
+
+
 def test_engine_sizes_and_fills_from_raw_but_marks_from_hfq():
     d1, d2 = 20240102, 20240103
     bars = {
