@@ -303,21 +303,24 @@ class FixtureE9_E18(unittest.TestCase):
     def test_e16_fractional_shares_after_corporate_action(self):
         pass
 
-    # E17 除权除息：现金分红账务 BLOCKED；可验证部分=HFQ 盯市连续性
-    # （茅台 20250626：raw 1435.86->1420 跳变，mark_price=HFQ 收盘无跳变）
-    def test_e17_ex_dividend_mark_price_continuity(self):
+    # E17 除权除息：现金分红账务 BLOCKED；账户盯市 = Raw close（X5-B 契约）
+    # （茅台 20250626：raw 1435.86->1420 跳变 = 分红未入账的真实经济体现。
+    #  账户 NAV 因此跳变是 corporate_action_support=BLOCKED 的披露行为；
+    #  禁止用 HFQ 价伪造除权日连续性——HFQ 连续性仅属研究口径
+    #  （indicators/strategy），不进入账户经济账务。）
+    def test_e17_ex_dividend_mark_price_uses_raw_close(self):
         bars = {
             20240102: {SYM: bar(20240102, 10.0, 10.0)},
             20240103: {SYM: bar(20240103, 10.0, 10.0, pre_close=10.0)},
-            # 除息日：raw close 跳变到 7.0（分红未入账），HFQ 收盘仍 10.0 连续
-            20240104: {SYM: bar(20240104, 7.0, 7.0, pre_close=10.0,
-                                mark_price=10.0)},
+            # 除息日：raw close 跳变到 7.0（分红未入账，BLOCKED）；不传 mark_price，
+            # 引擎回退 Raw close 盯市（X5-B：上游 run_backtest_v2 亦填 Raw close）
+            20240104: {SYM: bar(20240104, 7.0, 7.0, pre_close=10.0)},
         }
         r = run(bars, targets({20240102: 0.01}), cfg("e17"))
         snaps = [p for p in r.positions if p.date == 20240104]
         self.assertEqual(snaps[-1].shares, 1000)
-        self.assertAlmostEqual(snaps[-1].last_price, 10.0, places=6)  # HFQ 估值
-        self.assertAlmostEqual(snaps[-1].market_value, 10000.0, places=6)
+        self.assertAlmostEqual(snaps[-1].last_price, 7.0, places=6)   # Raw close 盯市
+        self.assertAlmostEqual(snaps[-1].market_value, 7000.0, places=6)
 
     # E18 订单未成交：不产生 Fill、Trade 或已实现 PnL
     def test_e18_unfilled_no_fake_ledger(self):

@@ -141,8 +141,9 @@ class Portfolio:
         snaps: list[PositionSnapshot] = []
         for symbol, pos in sorted(self.positions.items()):
             bar = bars.get(symbol)
-            # V0.4：盯市估值价优先 mark_price（HFQ 收盘价，研究口径，除权日连续）；
+            # V0.7（X5-B）：mark_price 为账户盯市估值价，上游必须传 Raw close；
             # 缺失时回退 Raw close；两者都缺按最近成本估值。
+            # 禁止用 HFQ 价盯市——绝对 HFQ 价内含上市以来全部复权因子。
             px = None
             if bar is not None:
                 if bar.mark_price is not None and bar.mark_price > 0:
