@@ -118,16 +118,20 @@ class TargetPortfolio:
     「继续持有」而不产生开盘价与收盘价差异导致的噪声调仓。
     signal_ids: symbol -> 原始 signal_id（可选）。无法唯一关联时留空，
     引擎不猜测信号。引擎在下一交易日按规则执行，不假设 decision_date 当日成交。
-    exit_signals: symbol -> (reason, reference_price, stop_price, take_price)。
+    exit_signals: symbol -> (reason, reference_price, stop_price, take_price, trigger_type)。
     策略检测到止盈/止损触发时填写，引擎据此生成带 exit_event_id 的 SELL 订单，
     并在未完全成交时持续重试直到平仓或回测结束。
+    trigger_type: "gap" (开盘价越过阈值，以执行日开盘价成交) 或
+                  "touch" (盘中触及阈值，以阈值价成交)。
     """
     decision_date: int
     weights: dict[str, float]
     version: str = "unknown"
     signal_ids: dict[str, str] = field(default_factory=dict)
     hold: frozenset[str] = frozenset()
-    exit_signals: dict[str, tuple[str, float, float, float]] = field(default_factory=dict)
+    exit_signals: dict[str, tuple[str, float, float, float, str]] = field(default_factory=dict)
+    # exit_signals: symbol -> (reason, reference_price, stop_price, take_price, trigger_type)
+    # trigger_type: "gap" (开盘越过阈值) 或 "touch" (盘中触及阈值)
 
 
 # ---------- 订单与成交 ----------
@@ -155,6 +159,8 @@ class Order:
     exit_event_id: str = ""
     trade_id: str = ""
     decision_reason: str = ""
+    trigger_type: str = ""  # gap=开盘越过 touch=盘中触及
+    trigger_price: float = 0.0  # touch 触发时的阈值价
 
     @property
     def shares(self) -> int:

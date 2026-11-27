@@ -141,7 +141,7 @@ def test_exit_event_precise_association():
                 decision_date=ctx.date,
                 weights={},
                 exit_signals={
-                    "sh600001": (EXIT_STOP_LOSS, pos.first_entry_price, 9.0, 0.0),
+                    "sh600001": (EXIT_STOP_LOSS, pos.first_entry_price, 9.0, 0.0, "gap"),
                 },
             )
         return None
@@ -179,7 +179,7 @@ def test_stop_loss_priority_over_take_profit():
                 decision_date=ctx.date,
                 weights={},
                 exit_signals={
-                    "sh600001": (EXIT_STOP_LOSS, pos.first_entry_price, 9.5, 11.5),
+                    "sh600001": (EXIT_STOP_LOSS, pos.first_entry_price, 9.5, 11.5, "gap"),
                 },
             )
         return None
@@ -217,7 +217,7 @@ def test_limit_down_rejection_then_retry():
                 weights={},
                 hold=frozenset({"sh600001"}),  # 保持持仓，不生成常规 SELL 订单
                 exit_signals={
-                    "sh600001": (EXIT_STOP_LOSS, pos.first_entry_price, 9.5, 0.0),
+                    "sh600001": (EXIT_STOP_LOSS, pos.first_entry_price, 9.5, 0.0, "gap"),
                 },
             )
         # T3 跌停被拒绝后，在 T4 回调时检查 pending_exits 仍在
@@ -257,7 +257,7 @@ def test_partial_fill_continues_exit():
                 decision_date=ctx.date,
                 weights={},
                 exit_signals={
-                    "sh600001": (EXIT_STOP_LOSS, pos.first_entry_price, 9.0, 0.0),
+                    "sh600001": (EXIT_STOP_LOSS, pos.first_entry_price, 9.0, 0.0, "gap"),
                 },
             )
         return None
@@ -310,7 +310,7 @@ def test_pending_exit_incomplete_at_backtest_end():
                 decision_date=ctx.date,
                 weights={},
                 exit_signals={
-                    "sh600001": (EXIT_STOP_LOSS, pos.first_entry_price, 9.0, 0.0),
+                    "sh600001": (EXIT_STOP_LOSS, pos.first_entry_price, 9.0, 0.0, "gap"),
                 },
             )
         # T3 触发止损，但 T4 是最后一天，无法执行

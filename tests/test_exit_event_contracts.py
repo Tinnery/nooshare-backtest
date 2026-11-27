@@ -181,7 +181,7 @@ class TestExitEventContracts(unittest.TestCase):
                 # 触发止盈
                 return TargetPortfolio(
                     decision_date=D3, weights={},
-                    exit_signals={SYM: ("TAKE_PROFIT", 11.0, 0.0, 11.0)},
+                    exit_signals={SYM: ("TAKE_PROFIT", 11.0, 0.0, 11.0, "gap")},
                 )
             return TargetPortfolio(decision_date=ctx.date, weights={})
 
@@ -221,7 +221,7 @@ class TestExitEventContracts(unittest.TestCase):
                         position_trade_id = pos.trade_id
                 return TargetPortfolio(
                     decision_date=D3, weights={},
-                    exit_signals={SYM: ("STOP_LOSS", 9.0, 9.0, 0.0)},
+                    exit_signals={SYM: ("STOP_LOSS", 9.0, 9.0, 0.0, "gap")},
                 )
             return TargetPortfolio(decision_date=ctx.date, weights={})
 
@@ -256,7 +256,7 @@ class TestExitEventContracts(unittest.TestCase):
             if ctx.date == D2:
                 return TargetPortfolio(
                     decision_date=D3, weights={},
-                    exit_signals={SYM: ("STOP_LOSS", 9.0, 9.0, 0.0)},
+                    exit_signals={SYM: ("STOP_LOSS", 9.0, 9.0, 0.0, "gap")},
                 )
             return TargetPortfolio(decision_date=ctx.date, weights={})
 
@@ -304,7 +304,7 @@ class TestExitEventContracts(unittest.TestCase):
             if ctx.date == D2:
                 return TargetPortfolio(
                     decision_date=D3, weights={},
-                    exit_signals={SYM: ("STOP_LOSS", 9.0, 9.0, 0.0)},
+                    exit_signals={SYM: ("STOP_LOSS", 9.0, 9.0, 0.0, "gap")},
                 )
             # D3 之后不再重复触发退出信号，引擎自动重试；无决策返回 None
             return None
@@ -340,7 +340,7 @@ class TestExitEventContracts(unittest.TestCase):
             if ctx.date == D2:
                 return TargetPortfolio(
                     decision_date=D3, weights={},
-                    exit_signals={SYM: ("STOP_LOSS", 9.0, 9.0, 0.0)},
+                    exit_signals={SYM: ("STOP_LOSS", 9.0, 9.0, 0.0, "gap")},
                 )
             return None
 
@@ -379,7 +379,7 @@ class TestExitEventContracts(unittest.TestCase):
             if ctx.date == D3:
                 return TargetPortfolio(
                     decision_date=D3, weights={},
-                    exit_signals={SYM: ("TAKE_PROFIT", 10.0, 0.0, 10.0)},
+                    exit_signals={SYM: ("TAKE_PROFIT", 10.0, 0.0, 10.0, "gap")},
                 )
             return None
 
@@ -414,7 +414,7 @@ class TestExitEventContracts(unittest.TestCase):
             if ctx.date == D2:
                 return TargetPortfolio(
                     decision_date=D3, weights={},
-                    exit_signals={SYM: ("TAKE_PROFIT", 11.0, 0.0, 11.0)},
+                    exit_signals={SYM: ("TAKE_PROFIT", 11.0, 0.0, 11.0, "gap")},
                 )
             return TargetPortfolio(decision_date=ctx.date, weights={})
 
@@ -496,7 +496,7 @@ class TestExitEventContracts(unittest.TestCase):
             if ctx.date == D2:
                 return TargetPortfolio(
                     decision_date=D3, weights={},
-                    exit_signals={SYM: ("STOP_LOSS", 9.0, 9.0, 0.0)},
+                    exit_signals={SYM: ("STOP_LOSS", 9.0, 9.0, 0.0, "gap")},
                 )
             return TargetPortfolio(decision_date=ctx.date, weights={})
 
@@ -526,7 +526,7 @@ class TestExitEventContracts(unittest.TestCase):
                 if ctx.date == D2:
                     return TargetPortfolio(
                         decision_date=D3, weights={},
-                        exit_signals={SYM: ("TAKE_PROFIT", 11.0, 0.0, 11.0)},
+                        exit_signals={SYM: ("TAKE_PROFIT", 11.0, 0.0, 11.0, "gap")},
                     )
                 return TargetPortfolio(decision_date=ctx.date, weights={})
             return strategy

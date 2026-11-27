@@ -62,7 +62,7 @@ def test_sell_order_carries_trade_id():
             return TargetPortfolio(
                 decision_date=ctx.date,
                 weights={},
-                exit_signals={"sh600001": (EXIT_STOP_LOSS, 10.0, 9.5, 0.0)},
+                exit_signals={"sh600001": (EXIT_STOP_LOSS, 10.0, 9.5, 0.0, "gap")},
             )
         return None
 
@@ -89,7 +89,7 @@ def test_sell_fill_carries_exit_event_id():
             return TargetPortfolio(
                 decision_date=ctx.date,
                 weights={},
-                exit_signals={"sh600001": (EXIT_STOP_LOSS, 10.0, 9.5, 0.0)},
+                exit_signals={"sh600001": (EXIT_STOP_LOSS, 10.0, 9.5, 0.0, "gap")},
             )
         return None
 
@@ -117,7 +117,7 @@ def test_rejected_sell_order_still_carries_ids():
             return TargetPortfolio(
                 decision_date=ctx.date,
                 weights={},
-                exit_signals={"sh600001": (EXIT_STOP_LOSS, 10.0, 9.5, 0.0)},
+                exit_signals={"sh600001": (EXIT_STOP_LOSS, 10.0, 9.5, 0.0, "gap")},
             )
         return None
 
@@ -148,7 +148,7 @@ def test_retry_order_same_exit_event_id():
             return TargetPortfolio(
                 decision_date=ctx.date,
                 weights={},
-                exit_signals={"sh600001": (EXIT_STOP_LOSS, 10.0, 9.5, 0.0)},
+                exit_signals={"sh600001": (EXIT_STOP_LOSS, 10.0, 9.5, 0.0, "gap")},
             )
         return None
 
@@ -180,7 +180,7 @@ def test_backtest_result_exit_events_populated():
             return TargetPortfolio(
                 decision_date=ctx.date,
                 weights={},
-                exit_signals={"sh600001": (EXIT_STOP_LOSS, 10.0, 9.5, 0.0)},
+                exit_signals={"sh600001": (EXIT_STOP_LOSS, 10.0, 9.5, 0.0, "gap")},
             )
         return None
 
@@ -204,7 +204,7 @@ def test_exit_event_status_complete_after_full_fill():
             return TargetPortfolio(
                 decision_date=ctx.date,
                 weights={},
-                exit_signals={"sh600001": (EXIT_STOP_LOSS, 10.0, 9.5, 0.0)},
+                exit_signals={"sh600001": (EXIT_STOP_LOSS, 10.0, 9.5, 0.0, "gap")},
             )
         return None
 
@@ -231,7 +231,7 @@ def test_exit_event_status_abandoned():
             return TargetPortfolio(
                 decision_date=ctx.date,
                 weights={},
-                exit_signals={"sh600001": (EXIT_STOP_LOSS, 10.0, 5.0, 0.0)},
+                exit_signals={"sh600001": (EXIT_STOP_LOSS, 10.0, 5.0, 0.0, "gap")},
             )
         return None
 
@@ -258,7 +258,7 @@ def test_all_exit_event_ids_are_valid_uuids():
             return TargetPortfolio(
                 decision_date=ctx.date,
                 weights={},
-                exit_signals={"sh600001": (EXIT_STOP_LOSS, 10.0, 9.5, 0.0)},
+                exit_signals={"sh600001": (EXIT_STOP_LOSS, 10.0, 9.5, 0.0, "gap")},
             )
         return None
 
@@ -295,7 +295,7 @@ def test_all_trade_ids_are_valid_uuids():
             return TargetPortfolio(
                 decision_date=ctx.date,
                 weights={},
-                exit_signals={"sh600001": (EXIT_STOP_LOSS, 10.0, 9.5, 0.0)},
+                exit_signals={"sh600001": (EXIT_STOP_LOSS, 10.0, 9.5, 0.0, "gap")},
             )
         return None
 

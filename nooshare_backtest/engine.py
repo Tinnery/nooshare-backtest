@@ -86,6 +86,7 @@ class PendingExit:
     stop_price: float         # 止损价（0 表示无止损）
     take_price: float         # 止盈价（0 表示无止盈）
     remaining_shares: int     # 尚未卖出的数量
+    trigger_type: str = "gap" # gap=开盘越过 touch=盘中触及
 
 
 @dataclass(frozen=True)
@@ -111,6 +112,7 @@ class _ExitIntent:
     stop_price: float
     take_price: float
     remaining_shares: int
+    trigger_type: str = "gap"  # gap=开盘越过 touch=盘中触及
 
 
 def run(
@@ -156,6 +158,8 @@ def run(
                 symbol: {
                     "exit_event_id": ei.exit_event_id,
                     "reason": ei.reason,
+                    "trigger_type": ei.trigger_type,
+                    "trigger_price": ei.stop_price if ei.reason == "STOP_LOSS" else ei.take_price,
                 }
                 for symbol, ei in pending_exits.items()
             }
@@ -251,6 +255,7 @@ def run(
                     stop_price=ei.stop_price,
                     take_price=ei.take_price,
                     remaining_shares=ei.remaining_shares,
+                    trigger_type=ei.trigger_type,
                 )
                 for ei in pending_exits.values()
             )
@@ -265,7 +270,7 @@ def run(
             pending = targets(ctx)
             # 处理策略返回的退出信号
             if pending and pending.exit_signals:
-                for symbol, (reason, ref_px, stop_px, take_px) in pending.exit_signals.items():
+                for symbol, (reason, ref_px, stop_px, take_px, trigger_type) in pending.exit_signals.items():
                     if symbol not in pending_exits:
                         # 首次触发：创建新的退出意图
                         trade_id = trade_ids.get(symbol, "")
@@ -284,6 +289,7 @@ def run(
                             stop_price=stop_px,
                             take_price=take_px,
                             remaining_shares=shares,
+                        trigger_type=trigger_type,
                         )
                         # 创建 ExitEvent 跟踪
                         exit_events_by_id[ee_id] = ExitEvent(
@@ -300,7 +306,7 @@ def run(
             pending = targets.get(date)
             # 处理静态目标中的退出信号
             if pending and pending.exit_signals:
-                for symbol, (reason, ref_px, stop_px, take_px) in pending.exit_signals.items():
+                for symbol, (reason, ref_px, stop_px, take_px, trigger_type) in pending.exit_signals.items():
                     if symbol not in pending_exits:
                         trade_id = trade_ids.get(symbol, "")
                         ee_id = exit_event_id(
@@ -318,6 +324,7 @@ def run(
                             stop_price=stop_px,
                             take_price=take_px,
                             remaining_shares=shares,
+                        trigger_type=trigger_type,
                         )
                         # 创建 ExitEvent 跟踪
                         exit_events_by_id[ee_id] = ExitEvent(

@@ -87,6 +87,8 @@ def plan_orders(
                 exit_event_id=exit_info["exit_event_id"],
                 trade_id=trade_ids.get(symbol, "") if trade_ids else "",
                 decision_reason=exit_info["reason"],
+                trigger_type=exit_info.get("trigger_type", "gap"),
+                trigger_price=exit_info.get("trigger_price", 0.0),
             ))
     
     # 2. 再生成常规调仓订单
@@ -143,6 +145,8 @@ def _order_with_final(
         exit_event_id=order.exit_event_id,
         trade_id=order.trade_id,
         decision_reason=order.decision_reason,
+        trigger_type=order.trigger_type,
+        trigger_price=order.trigger_price,
     )
 
 
@@ -201,7 +205,12 @@ def execute_orders(
             block = "T_PLUS_1" if total_shares > 0 else "NO_SELLABLE_POSITION"
             final_orders.append(_order_with_final(order, status=ORDER_SKIPPED, filled=0, reason=block))
             continue
-        bd = costs.breakdown(bar.open, shares, "SELL")
+        # 根据 trigger_type 决定成交价格
+        if order.trigger_type == "touch" and order.trigger_price > 0:
+            exec_price = order.trigger_price  # 盘中触及阈值，以阈值价成交
+        else:
+            exec_price = bar.open  # 开盘越过或默认，以开盘价成交
+        bd = costs.breakdown(exec_price, shares, "SELL")
         fill = _fill(order, bd, date, seq, shares)
         portfolio.apply_fill(fill)
         fills.append(fill)
