@@ -302,7 +302,7 @@ class TestExitEventContracts(unittest.TestCase):
                     exit_signals={SYM: ("STOP_LOSS", 9.0, 9.0, 0.0)},
                 )
             # D3 close 触发退出后，不再重复触发退出信号，引擎自动重试
-            return TargetPortfolio(decision_date=ctx.date, weights={})
+            return None
 
         result = _run(bars, strategy)
 
@@ -337,7 +337,7 @@ class TestExitEventContracts(unittest.TestCase):
                     decision_date=D3, weights={},
                     exit_signals={SYM: ("STOP_LOSS", 9.0, 9.0, 0.0)},
                 )
-            return TargetPortfolio(decision_date=ctx.date, weights={})
+            return None
 
         result = _run(bars, strategy)
 
@@ -483,7 +483,7 @@ class TestExitEventContracts(unittest.TestCase):
                     decision_date=D3, weights={},
                     exit_signals={SYM: ("STOP_LOSS", 9.0, 9.0, 0.0)},
                 )
-            return TargetPortfolio(decision_date=ctx.date, weights={})
+            return None
 
         result = _run(bars, strategy)
 
