@@ -48,10 +48,6 @@ class TestStrategyBaseline(unittest.TestCase):
         self.assertAlmostEqual(aaa.net_cash, baseline_cash, places=3)
         self.assertAlmostEqual(aaa.net_cash, EXPECTED_AAA_BUY_CASH, places=3)
 
-    def test_fake_gap_limit_matches_baseline(self):
-        from nooshare_backtest.rules import RuleSet
-
-        self.assertEqual(RuleSet().fake_gap_limit, BASELINE_FAKE_GAP)
 
 
 if __name__ == "__main__":

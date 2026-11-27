@@ -11,6 +11,7 @@ T+1 按「买入批次」判断：每笔买入形成独立 lot，含 bought_date
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from math import isfinite
 
 from .models import Bar, EquityPoint, Fill, LedgerEntry, PositionSnapshot, PositionView
 
@@ -141,7 +142,18 @@ class Portfolio:
         snaps: list[PositionSnapshot] = []
         for symbol, pos in sorted(self.positions.items()):
             bar = bars.get(symbol)
-            px = bar.close if bar and bar.close > 0 else pos.avg_cost
+            # V0.7（X5-B）：mark_price 为账户盯市估值价，上游必须传 Raw close；
+            # 缺失时回退 Raw close；两者都缺按最近成本估值。
+            # 禁止用 HFQ 价盯市——绝对 HFQ 价内含上市以来全部复权因子。
+            px = None
+            if bar is not None:
+                # isfinite 防护：NaN 被 >0 判断天然排除，但 inf > 0 为 True 会污染账务
+                if bar.mark_price is not None and bar.mark_price > 0 and isfinite(bar.mark_price):
+                    px = bar.mark_price
+                elif bar.close and bar.close > 0 and isfinite(bar.close):
+                    px = bar.close
+            if px is None:
+                px = pos.avg_cost
             mv = px * pos.shares
             market_value += mv
             snaps.append(PositionSnapshot(

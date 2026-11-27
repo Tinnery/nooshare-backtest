@@ -9,7 +9,8 @@ from nooshare_backtest.rules import R_T_PLUS_1, RuleSet
 
 def bar(px=10.0, **kwargs):
     base = dict(date=20240103, symbol="AAA", open=px, high=px * 1.01,
-                low=px * 0.99, close=px, volume=100_000, ret=0.0)
+                low=px * 0.99, close=px, volume=100_000, ret=0.0,
+                pre_close=10.0, limit_up_price=11.0, limit_down_price=9.0)
     base.update(kwargs)
     return Bar(**base)
 
@@ -52,13 +53,24 @@ class TestExecution(unittest.TestCase):
 
     def test_blocked_buy_records_reason(self):
         p = Portfolio(cash=100_000.0)
-        bars = {"AAA": bar(is_limit_up=True)}
+        # 开盘价等于涨停价（Raw 11.0）→ OPEN_LIMIT_UP 保守不成交
+        bars = {"AAA": bar(open=11.0, limit_up_price=11.0)}
         orders = [Order(20240103, "AAA", "BUY", 1_000, 0.5)]
         fills, final, devs = execute_orders(orders, p, bars, 20240103,
                                             self.rules, self.costs, self.cfg)
         self.assertEqual(fills, [])
-        self.assertEqual(final[0].reason, "LIMIT_UP")
-        self.assertEqual(devs[0].reason, "LIMIT_UP")
+        self.assertEqual(final[0].reason, "OPEN_LIMIT_UP")
+        self.assertEqual(devs[0].reason, "OPEN_LIMIT_UP")
+
+    def test_close_limit_touch_allows_open_buy(self):
+        """E3 场景：开盘低于涨停、收盘触及涨停 → 开盘买入允许成交。"""
+        p = Portfolio(cash=100_000.0)
+        bars = {"AAA": bar(open=10.5, close=11.0, is_limit_up=True)}
+        orders = [Order(20240103, "AAA", "BUY", 1_000, 0.5)]
+        fills, final, devs = execute_orders(orders, p, bars, 20240103,
+                                            self.rules, self.costs, self.cfg)
+        self.assertEqual(len(fills), 1)
+        self.assertEqual(final[0].status, "FILLED")
 
     def test_plan_orders_uses_execution_date(self):
         from nooshare_backtest.execution import plan_orders

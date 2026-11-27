@@ -3,6 +3,7 @@ import json
 import unittest
 
 from nooshare_backtest.api import run_backtest
+from tests.fixtures.preclose import backfill_pre_close
 from nooshare_backtest.engine import EngineConfig, run
 from nooshare_backtest.execution import ExecutionConfig
 from nooshare_backtest.models import (
@@ -45,7 +46,7 @@ class TestEventIdentity(unittest.TestCase):
     def test_signal_id_propagates_to_order(self):
         bars = normal_bars()
         tgts = decisions((D1, {"sh600519": 0.5}, {"sh600519": "sig-001"}))
-        r = run(bars, tgts, EngineConfig(run_id="sigtest"))
+        r = run(backfill_pre_close(bars), tgts, EngineConfig(run_id="sigtest"))
         buy = [o for o in r.orders if o.side == "BUY"][0]
         self.assertEqual(buy.signal_id, "sig-001")
 
@@ -93,7 +94,7 @@ class TestTradeLifecycle(unittest.TestCase):
         orders = [o for o in r.orders if o.side == "BUY"]
         self.assertTrue(orders)
         self.assertTrue(all(o.status == "REJECTED" for o in orders))
-        self.assertTrue(all(o.reason == "LIMIT_UP" for o in orders))
+        self.assertTrue(all(o.reason == "OPEN_LIMIT_UP" for o in orders))
         self.assertEqual(r.fills, [])
         self.assertEqual(r.trades, [])
 
@@ -110,7 +111,7 @@ class TestTradeLifecycle(unittest.TestCase):
             },
         }
         tgts = decisions((D1, {"sh600519": 0.9, "sz000001": 0.9}))
-        r = run(bars, tgts, EngineConfig(run_id="partial", initial_cash=11_000.0))
+        r = run(backfill_pre_close(bars), tgts, EngineConfig(run_id="partial", initial_cash=11_000.0))
         buys = [o for o in r.orders if o.side == "BUY"]
         partial = [o for o in buys if o.status == "PARTIALLY_FILLED"]
         self.assertTrue(partial, "资金不足应产生 PARTIALLY_FILLED")
@@ -145,7 +146,7 @@ class TestTradeLifecycle(unittest.TestCase):
             (D3, {"sh600519": 0.05}),   # D4 部分卖出
             (D4, {"sh600519": 0.0}),    # D5 全部卖出
         )
-        r = run(bars, tgts, EngineConfig(run_id="multi"))
+        r = run(backfill_pre_close(bars), tgts, EngineConfig(run_id="multi"))
         self.assertEqual(len(r.trades), 1)
         t = r.trades[0]
         self.assertEqual(t.status, "CLOSED")
@@ -162,7 +163,7 @@ class TestTradeLifecycle(unittest.TestCase):
             (D1, {"sh600519": 0.5}), (D2, {"sh600519": 0.0}),
             (D3, {"sh600519": 0.5}),
         )
-        r = run(bars, tgts, EngineConfig(run_id="reopen"))
+        r = run(backfill_pre_close(bars), tgts, EngineConfig(run_id="reopen"))
         self.assertEqual(len(r.trades), 2)
         self.assertNotEqual(r.trades[0].trade_id, r.trades[1].trade_id)
 

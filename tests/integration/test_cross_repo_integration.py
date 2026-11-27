@@ -12,6 +12,7 @@ import unittest
 from pathlib import Path
 
 from nooshare_backtest.engine import EngineConfig, run
+from tests.fixtures.preclose import backfill_pre_close
 from nooshare_backtest.models import Bar, TargetPortfolio
 
 from tests.fixtures.lifecycle import D1, D2, D3, D4, D5
@@ -42,7 +43,7 @@ def make_result():
         D2: TargetPortfolio(D2, {s: 0.0}, signal_ids={s: "sig-e2e-2"}),
         D3: TargetPortfolio(D3, {s: 0.4}, signal_ids={s: "sig-e2e-3"}),
     }
-    return run(bars, targets, EngineConfig(run_id="e2e-run", initial_cash=500_000.0))
+    return run(backfill_pre_close(bars), targets, EngineConfig(run_id="e2e-run", initial_cash=500_000.0))
 
 
 def result_to_runpackage(result, signals):

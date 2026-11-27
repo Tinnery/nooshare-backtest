@@ -29,7 +29,8 @@ class _OpenTrade:
     exit_qty: int = 0
     entry_notional: float = 0.0    # 买入成交价*数量
     exit_notional: float = 0.0
-    costs: float = 0.0             # 该 Trade 全部成交费用
+    costs: float = 0.0             # 该 Trade 全部成交费用（含滑点，展示口径）
+    fee_costs: float = 0.0         # 佣金+印花税+过户费（不含滑点；gross_pnl 还原用）
     net_pnl: float = 0.0
     exit_reason: str = ""
     unresolved: bool = False
@@ -85,6 +86,7 @@ def build_trades(
             t.entry_qty += fill.shares
             t.entry_notional += fill.price * fill.shares
             t.costs += fill.total_cost
+            t.fee_costs += fill.commission + fill.stamp_duty + fill.transfer_fee
             allocations.append(TradeFillAllocation(t.trade_id, fill.fill_id, "ENTRY", fill.shares))
         else:  # SELL
             if t is None or t.shares <= 0:
@@ -115,6 +117,7 @@ def build_trades(
                 t.exit_qty += consumed
                 t.exit_notional += fill.price * consumed
                 t.costs += fill.total_cost * prop
+                t.fee_costs += (fill.commission + fill.stamp_duty + fill.transfer_fee) * prop
                 allocations.append(TradeFillAllocation(t.trade_id, fill.fill_id, "EXIT", consumed))
                 # 从 SELL Order 提取 decision_reason（STOP_LOSS/TAKE_PROFIT/TARGET_WEIGHT）
                 dec_reason = "TARGET_WEIGHT"
@@ -134,7 +137,9 @@ def build_trades(
 
 def _finalize(t: _OpenTrade, out: list[Trade], trading_dates: list[int], closed_date: int | None) -> None:
     entry_cost = t.entry_notional  # 含滑点的买入成交额，作为收益率分母
-    gross_pnl = t.net_pnl + t.costs
+    # gross_pnl = 价差口径（exit_notional - entry_notional）= net_pnl + 真实费用
+    # （佣金+印花税+过户费）。滑点已含在成交价中，不得重复加回（V0.4 修复）。
+    gross_pnl = t.net_pnl + t.fee_costs
     gross_return = gross_pnl / entry_cost if entry_cost else 0.0
     net_return = t.net_pnl / entry_cost if entry_cost else 0.0
     if closed_date is not None and closed_date in trading_dates and t.opened_date in trading_dates:

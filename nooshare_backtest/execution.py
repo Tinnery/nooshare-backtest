@@ -87,6 +87,8 @@ def plan_orders(
                 exit_event_id=exit_info["exit_event_id"],
                 trade_id=trade_ids.get(symbol, "") if trade_ids else "",
                 decision_reason=exit_info["reason"],
+                trigger_type=exit_info.get("trigger_type", "gap"),
+                trigger_price=exit_info.get("trigger_price", 0.0),
             ))
     
     # 2. 再生成常规调仓订单
@@ -105,9 +107,14 @@ def plan_orders(
         want = _round_shares(target_value / px, cfg) if px > 0 else 0
         have = portfolio.shares_of(symbol)
         delta = want - have
-        if delta == 0:
+        # px==0 表示执行日无行情：即使 delta==0 也生成订单，
+        # 由 execute_orders 判 NO_MARKET_DATA 显式留痕（E12：缺失行情不得静默）。
+        if delta == 0 and px > 0:
             continue
-        side = "BUY" if delta > 0 else "SELL"
+        if delta == 0 and px == 0 and weight <= 0:
+            continue  # 无目标权重、无持仓、无行情：无信息价值
+        # delta==0 且无行情时按目标意图定方向（买入意图无法定价 -> BUY 留痕）
+        side = "BUY" if (delta > 0 or (delta == 0 and weight > 0)) else "SELL"
         decision_id, signal_id = _identity(target, symbol)
         oid = event_id(run_id, "order", date, idx)
         orders.append(Order(
@@ -138,6 +145,8 @@ def _order_with_final(
         exit_event_id=order.exit_event_id,
         trade_id=order.trade_id,
         decision_reason=order.decision_reason,
+        trigger_type=order.trigger_type,
+        trigger_price=order.trigger_price,
     )
 
 
@@ -183,19 +192,25 @@ def execute_orders(
     # 先处理卖出
     for seq, order in enumerate([o for o in orders if o.side == "SELL"]):
         bar = bars.get(order.symbol)
-        reason = rules.can_sell(bar, not bool(portfolio.sellable_shares(order.symbol, date)))
+        total_shares = portfolio.shares_of(order.symbol)
         sellable = portfolio.sellable_shares(order.symbol, date)
-        shares = min(order.requested_shares, portfolio.shares_of(order.symbol), sellable)
+        reason = rules.can_sell(bar, sellable, total_shares)
+        shares = min(order.requested_shares, total_shares, sellable)
         if reason:
             final_orders.append(_order_with_final(order, status=ORDER_REJECTED, filled=0, reason=reason))
             deviations.append(TargetDeviation(date, order.symbol, order.target_weight,
                                               order.requested_shares, 0, reason))
             continue
         if shares <= 0:
-            block = "T_PLUS_1" if portfolio.shares_of(order.symbol) > 0 else "NO_POSITION"
+            block = "T_PLUS_1" if total_shares > 0 else "NO_SELLABLE_POSITION"
             final_orders.append(_order_with_final(order, status=ORDER_SKIPPED, filled=0, reason=block))
             continue
-        bd = costs.breakdown(bar.open, shares, "SELL")
+        # 根据 trigger_type 决定成交价格
+        if order.trigger_type == "touch" and order.trigger_price > 0:
+            exec_price = order.trigger_price  # 盘中触及阈值，以阈值价成交
+        else:
+            exec_price = bar.open  # 开盘越过或默认，以开盘价成交
+        bd = costs.breakdown(exec_price, shares, "SELL")
         fill = _fill(order, bd, date, seq, shares)
         portfolio.apply_fill(fill)
         fills.append(fill)

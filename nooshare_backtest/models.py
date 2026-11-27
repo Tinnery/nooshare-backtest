@@ -68,23 +68,39 @@ def _coerce(cls, data: dict[str, Any], renames: dict[str, str] | None = None):
 
 @dataclass(frozen=True)
 class Bar:
-    """单只证券单个交易日的行情。价格为后复权(hfq)口径。
+    """单只证券单个交易日的行情。
 
-    is_suspended / is_limit_up / is_limit_down / is_st 为当日交易状态，
-    用于 A 股交易规则判定。ret 为当日后复权收益（可选）。
+    V0.4 双口径（见 design implementation-docs/nooshare-backtest/execution-model.md）：
+    - open/high/low/close：Raw 可交易价格（成交、股数换算、涨跌停、费用）；
+    - mark_price：账户盯市估值价。V0.7（X5-B 实验裁决）必须传 Raw close：\n          账户经济账务按真实价格盯市；HFQ 归一化基准（面板首日）在买入日 F != F_panel_start 时\n          把买入前的公司行为因子差计入持仓（X5-B 实证虚假 +50%）；\n          绝对 HFQ 价内含上市以来全部复权因子，同样禁止；\n    - pre_close：Raw 前收盘价，涨跌停价计算基准（禁止用 HFQ 前收盘计算）；
+    - limit_up_price/limit_down_price：执行日生效的涨跌停价（调用方或规则解析器按 PIT 规则计算）；
+    - no_limit：无涨跌幅限制日（IPO 初期等），True 时跳过涨跌停判定；
+    - trading_days_since_list：执行日是该股上市后第几个交易日（按交易日历计算），
+      供 IPO 无涨跌幅限制期判定；
+    - list_date：上市日（YYYYMMDD），未上市判定用；
+    - is_limit_up/is_limit_down：收盘状态标记，仅参考信息，不参与开盘订单判定；
+    - is_st：ST 状态（供策略股票池政策过滤）；
+    - ret：HFQ 日收益（研究口径，仅参考，不参与规则判定）。
     canonical_id / exchange 有身份信息时保留，禁止由代码前缀推断。
     """
     date: int                 # YYYYMMDD
     symbol: str
-    open: float
-    high: float
-    low: float
-    close: float
-    volume: float | None = None   # None=未知，此时仅按 is_suspended 判定；0 视为停牌
-    ret: float | None = None
+    open: float               # Raw 开盘价（执行价基准）
+    high: float               # Raw 最高价
+    low: float                # Raw 最低价
+    close: float              # Raw 收盘价
+    volume: float | None = None   # None=未知，此时仅按 is_suspended 判定；0 视为停牌/无成交
+    ret: float | None = None      # HFQ 日收益（研究口径，仅参考）
+    mark_price: float | None = None   # 账户盯市估值价（V0.7: Raw close）
+    pre_close: float | None = None    # Raw 前收盘价（涨跌停基准）
+    limit_up_price: float | None = None
+    limit_down_price: float | None = None
+    no_limit: bool = False
+    trading_days_since_list: int | None = None
+    list_date: int | None = None
     is_suspended: bool = False
-    is_limit_up: bool = False
-    is_limit_down: bool = False
+    is_limit_up: bool = False     # 收盘涨停（参考信息，不参与成交判定）
+    is_limit_down: bool = False   # 收盘跌停（参考信息，不参与成交判定）
     is_st: bool = False
     canonical_id: str = ""
     exchange: str = ""
@@ -102,16 +118,20 @@ class TargetPortfolio:
     「继续持有」而不产生开盘价与收盘价差异导致的噪声调仓。
     signal_ids: symbol -> 原始 signal_id（可选）。无法唯一关联时留空，
     引擎不猜测信号。引擎在下一交易日按规则执行，不假设 decision_date 当日成交。
-    exit_signals: symbol -> (reason, reference_price, stop_price, take_price)。
+    exit_signals: symbol -> (reason, reference_price, stop_price, take_price, trigger_type)。
     策略检测到止盈/止损触发时填写，引擎据此生成带 exit_event_id 的 SELL 订单，
     并在未完全成交时持续重试直到平仓或回测结束。
+    trigger_type: "gap" (开盘价越过阈值，以执行日开盘价成交) 或
+                  "touch" (盘中触及阈值，以阈值价成交)。
     """
     decision_date: int
     weights: dict[str, float]
     version: str = "unknown"
     signal_ids: dict[str, str] = field(default_factory=dict)
     hold: frozenset[str] = frozenset()
-    exit_signals: dict[str, tuple[str, float, float, float]] = field(default_factory=dict)
+    exit_signals: dict[str, tuple[str, float, float, float, str]] = field(default_factory=dict)
+    # exit_signals: symbol -> (reason, reference_price, stop_price, take_price, trigger_type)
+    # trigger_type: "gap" (开盘越过阈值) 或 "touch" (盘中触及阈值)
 
 
 # ---------- 订单与成交 ----------
@@ -139,6 +159,8 @@ class Order:
     exit_event_id: str = ""
     trade_id: str = ""
     decision_reason: str = ""
+    trigger_type: str = ""  # gap=开盘越过 touch=盘中触及
+    trigger_price: float = 0.0  # touch 触发时的阈值价
 
     @property
     def shares(self) -> int:

@@ -17,6 +17,7 @@ from __future__ import annotations
 import pytest
 
 from nooshare_backtest.engine import DecisionContext, EngineConfig, PendingExit, run
+from tests.fixtures.preclose import backfill_pre_close
 from nooshare_backtest.models import (
     Bar,
     EXIT_STOP_LOSS,
@@ -27,10 +28,16 @@ from nooshare_backtest.models import (
 
 
 def _bar(date: int, symbol: str, o: float, h: float, l: float, c: float,
-         ret: float | None = None, is_limit_down: bool = False) -> Bar:
+         ret: float | None = None, pre_close: float | None = None) -> Bar:
+    """V0.4：pre_close 提供时按主板 10% 手算涨跌停价。"""
+    lu = ld = None
+    if pre_close is not None:
+        lu = round(pre_close * 1.10, 2)
+        ld = round(pre_close * 0.90, 2)
     return Bar(
         date=date, symbol=symbol, open=o, high=h, low=l, close=c,
-        volume=1_000_000.0, ret=ret, is_limit_down=is_limit_down,
+        volume=1_000_000.0, ret=ret, pre_close=pre_close,
+        limit_up_price=lu, limit_down_price=ld,
         canonical_id=symbol[2:], exchange=symbol[:2],
     )
 
@@ -51,7 +58,7 @@ def test_first_buy_order_carries_signal():
             )
         return None
 
-    result = run(bars, decide, EngineConfig(run_id="test-signal"))
+    result = run(backfill_pre_close(bars), decide, EngineConfig(run_id="test-signal"))
     buy_orders = [o for o in result.orders if o.side == "BUY"]
     assert len(buy_orders) == 1
     assert buy_orders[0].signal_id == "signal-abc-123"
@@ -72,9 +79,9 @@ def test_trade_id_stable_across_runs():
             return TargetPortfolio(decision_date=ctx.date, weights={})
         return None
 
-    r1 = run(bars, decide, EngineConfig(run_id="run-A"))
-    r2 = run(bars, decide, EngineConfig(run_id="run-A"))
-    r3 = run(bars, decide, EngineConfig(run_id="run-B"))
+    r1 = run(backfill_pre_close(bars), decide, EngineConfig(run_id="run-A"))
+    r2 = run(backfill_pre_close(bars), decide, EngineConfig(run_id="run-A"))
+    r3 = run(backfill_pre_close(bars), decide, EngineConfig(run_id="run-B"))
 
     assert len(r1.trades) == 1
     assert len(r2.trades) == 1
@@ -108,7 +115,7 @@ def test_trade_id_established_on_first_buy_fill():
             seen_trade_ids.append(pos.trade_id)
         return None
 
-    run(bars, decide, EngineConfig(run_id="test-early-trade-id"))
+    run(backfill_pre_close(bars), decide, EngineConfig(run_id="test-early-trade-id"))
     assert len(seen_trade_ids) == 1
     # UUID5 格式：8-4-4-4-12 hex digits
     import re
@@ -134,12 +141,12 @@ def test_exit_event_precise_association():
                 decision_date=ctx.date,
                 weights={},
                 exit_signals={
-                    "sh600001": (EXIT_STOP_LOSS, pos.first_entry_price, 9.0, 0.0),
+                    "sh600001": (EXIT_STOP_LOSS, pos.first_entry_price, 9.0, 0.0, "gap"),
                 },
             )
         return None
 
-    result = run(bars, decide, EngineConfig(run_id="test-exit-assoc"))
+    result = run(backfill_pre_close(bars), decide, EngineConfig(run_id="test-exit-assoc"))
     assert len(result.trades) == 1
     trade = result.trades[0]
     assert trade.status == "CLOSED"
@@ -172,12 +179,12 @@ def test_stop_loss_priority_over_take_profit():
                 decision_date=ctx.date,
                 weights={},
                 exit_signals={
-                    "sh600001": (EXIT_STOP_LOSS, pos.first_entry_price, 9.5, 11.5),
+                    "sh600001": (EXIT_STOP_LOSS, pos.first_entry_price, 9.5, 11.5, "gap"),
                 },
             )
         return None
 
-    result = run(bars, decide, EngineConfig(run_id="test-stop-priority"))
+    result = run(backfill_pre_close(bars), decide, EngineConfig(run_id="test-stop-priority"))
     sell_orders = [o for o in result.orders if o.side == "SELL"]
     assert len(sell_orders) >= 1
     assert sell_orders[0].decision_reason == EXIT_STOP_LOSS
@@ -188,10 +195,10 @@ def test_limit_down_rejection_then_retry():
     bars = {
         20240101: {"sh600001": _bar(20240101, "sh600001", 10.0, 10.5, 9.8, 10.2, 0.0)},
         20240102: {"sh600001": _bar(20240102, "sh600001", 10.2, 10.6, 10.0, 10.4, 0.02)},
-        20240103: {"sh600001": _bar(20240103, "sh600001", 10.4, 10.8, 10.2, 10.6, 0.02)},
-        20240104: {"sh600001": _bar(20240104, "sh600001", 9.0, 9.5, 8.5, 9.0, -0.15, is_limit_down=True)},
-        20240105: {"sh600001": _bar(20240105, "sh600001", 9.0, 9.5, 8.8, 9.2, 0.02)},
-        20240106: {"sh600001": _bar(20240106, "sh600001", 9.2, 9.6, 9.0, 9.4, 0.02)},
+        20240103: {"sh600001": _bar(20240103, "sh600001", 10.4, 10.8, 10.2, 10.0, 0.02)},
+        20240104: {"sh600001": _bar(20240104, "sh600001", 9.0, 9.5, 8.5, 9.0, -0.15, pre_close=10.0)},
+        20240105: {"sh600001": _bar(20240105, "sh600001", 9.0, 9.5, 8.8, 9.2, 0.02, pre_close=9.0)},
+        20240106: {"sh600001": _bar(20240106, "sh600001", 9.2, 9.6, 9.0, 9.4, 0.02, pre_close=9.2)},
     }
 
     exit_triggered = False
@@ -210,7 +217,7 @@ def test_limit_down_rejection_then_retry():
                 weights={},
                 hold=frozenset({"sh600001"}),  # 保持持仓，不生成常规 SELL 订单
                 exit_signals={
-                    "sh600001": (EXIT_STOP_LOSS, pos.first_entry_price, 9.5, 0.0),
+                    "sh600001": (EXIT_STOP_LOSS, pos.first_entry_price, 9.5, 0.0, "gap"),
                 },
             )
         # T3 跌停被拒绝后，在 T4 回调时检查 pending_exits 仍在
@@ -220,9 +227,9 @@ def test_limit_down_rejection_then_retry():
                 pending_exit_seen_on_retry = True
         return None
 
-    result = run(bars, decide, EngineConfig(run_id="test-retry"))
+    result = run(backfill_pre_close(bars), decide, EngineConfig(run_id="test-retry"))
     # T3 跌停拒绝
-    rejected_orders = [o for o in result.orders if o.status == "REJECTED" and o.reason == "LIMIT_DOWN"]
+    rejected_orders = [o for o in result.orders if o.status == "REJECTED" and o.reason == "OPEN_LIMIT_DOWN"]
     assert len(rejected_orders) >= 1, "应有跌停拒绝的订单"
     # T4 回调时 pending_exit 仍在
     assert pending_exit_seen_on_retry, "跌停拒绝后 pending_exit 应在下次回调时仍存在"
@@ -237,8 +244,8 @@ def test_partial_fill_continues_exit():
         20240101: {"sh600001": _bar(20240101, "sh600001", 10.0, 10.5, 9.8, 10.2, 0.0)},
         20240102: {"sh600001": _bar(20240102, "sh600001", 10.2, 10.6, 10.0, 10.4, 0.02)},
         20240103: {"sh600001": _bar(20240103, "sh600001", 10.4, 10.8, 10.2, 10.6, 0.02)},
-        20240104: {"sh600001": _bar(20240104, "sh600001", 8.0, 8.5, 7.5, 8.2, -0.20)},
-        20240105: {"sh600001": _bar(20240105, "sh600001", 8.2, 8.6, 8.0, 8.4, 0.02)},
+        20240104: {"sh600001": _bar(20240104, "sh600001", 9.7, 9.8, 8.5, 8.6, -0.19, pre_close=10.6)},
+        20240105: {"sh600001": _bar(20240105, "sh600001", 8.2, 8.6, 8.0, 8.4, 0.02, pre_close=8.6)},
     }
 
     def decide(ctx: DecisionContext) -> TargetPortfolio | None:
@@ -250,12 +257,12 @@ def test_partial_fill_continues_exit():
                 decision_date=ctx.date,
                 weights={},
                 exit_signals={
-                    "sh600001": (EXIT_STOP_LOSS, pos.first_entry_price, 9.0, 0.0),
+                    "sh600001": (EXIT_STOP_LOSS, pos.first_entry_price, 9.0, 0.0, "gap"),
                 },
             )
         return None
 
-    result = run(bars, decide, EngineConfig(run_id="test-partial"))
+    result = run(backfill_pre_close(bars), decide, EngineConfig(run_id="test-partial"))
     sell_orders = [o for o in result.orders if o.side == "SELL"]
     # 至少有一次卖出尝试
     assert len(sell_orders) >= 1
@@ -277,7 +284,7 @@ def test_open_trade_at_backtest_end():
             return TargetPortfolio(decision_date=ctx.date, weights={"sh600001": 0.95})
         return None
 
-    result = run(bars, decide, EngineConfig(run_id="test-open"))
+    result = run(backfill_pre_close(bars), decide, EngineConfig(run_id="test-open"))
     assert len(result.trades) == 1
     trade = result.trades[0]
     assert trade.status == "OPEN"
@@ -303,13 +310,13 @@ def test_pending_exit_incomplete_at_backtest_end():
                 decision_date=ctx.date,
                 weights={},
                 exit_signals={
-                    "sh600001": (EXIT_STOP_LOSS, pos.first_entry_price, 9.0, 0.0),
+                    "sh600001": (EXIT_STOP_LOSS, pos.first_entry_price, 9.0, 0.0, "gap"),
                 },
             )
         # T3 触发止损，但 T4 是最后一天，无法执行
         return None
 
-    result = run(bars, decide, EngineConfig(run_id="test-pending-exit"))
+    result = run(backfill_pre_close(bars), decide, EngineConfig(run_id="test-pending-exit"))
     # 检查 deviations 中是否有 PENDING_EXIT 标记
     pending_devs = [d for d in result.deviations if "PENDING_EXIT" in d.reason]
     # 如果 T4 无法执行（例如跌停），应有 PENDING_EXIT 标记
@@ -333,9 +340,9 @@ def test_multiple_runs_event_identity_no_conflict():
             return TargetPortfolio(decision_date=ctx.date, weights={})
         return None
 
-    r1 = run(bars, decide, EngineConfig(run_id="run-1"))
-    r2 = run(bars, decide, EngineConfig(run_id="run-2"))
-    r3 = run(bars, decide, EngineConfig(run_id="run-3"))
+    r1 = run(backfill_pre_close(bars), decide, EngineConfig(run_id="run-1"))
+    r2 = run(backfill_pre_close(bars), decide, EngineConfig(run_id="run-2"))
+    r3 = run(backfill_pre_close(bars), decide, EngineConfig(run_id="run-3"))
 
     # 所有 Trade ID 互不冲突
     trade_ids = [r1.trades[0].trade_id, r2.trades[0].trade_id, r3.trades[0].trade_id]

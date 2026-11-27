@@ -41,3 +41,36 @@ class TestPortfolio(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestMarkPriceFiniteGuard(unittest.TestCase):
+    """mark() 对非有限价格（inf）必须回退，禁止污染 market_value/nav。
+
+    NaN 已被 >0 判断天然排除；inf > 0 为 True，需要 isfinite 显式防护
+    （甄别自 Backtest PR #5 0678a21/4e8e12b，按 V0.7 结构实现）。"""
+
+    def _mark_with_mark_price(self, mark_price):
+        from nooshare_backtest.accounting import Portfolio
+        from nooshare_backtest.models import Bar, Fill
+        pf = Portfolio(cash=99_000.0)
+        pf.apply_fill(Fill(20240102, "sh600519", "BUY", 100, 10.0,
+                           commission=5.0, stamp_duty=0.0, transfer_fee=1.0,
+                           slippage=0.0, trade_id="t1"))
+        bars = {"sh600519": Bar(20240103, "sh600519", 10.0, 10.0, 10.0, 10.0,
+                                mark_price=mark_price)}
+        return pf.mark(20240103, bars, 100_000.0)
+
+    def test_inf_mark_price_falls_back_to_raw_close(self):
+        eq, snaps = self._mark_with_mark_price(float("inf"))
+        self.assertTrue(eq.nav == eq.nav, "nav 不得为 NaN")
+        self.assertLess(eq.nav, 2.0, "100 股按 Raw close 10 盯市 nav 应接近 1.0 而非 inf")
+        self.assertEqual(snaps[-1].last_price, 10.0)
+
+    def test_nan_mark_price_falls_back_to_raw_close(self):
+        eq, snaps = self._mark_with_mark_price(float("nan"))
+        self.assertTrue(eq.nav == eq.nav, "nav 不得为 NaN")
+        self.assertEqual(snaps[-1].last_price, 10.0)
+
+
+if __name__ == "__main__":
+    unittest.main()
