@@ -3,6 +3,10 @@ from nooshare_backtest.models import Bar
 
 
 def test_normalize_bars_preserves_missing_raw_open_for_fail_closed_execution():
+    """open=None 保留为 None（不抛 TypeError），执行层按缺失行情保守处理。
+
+    V0.7 契约：limit_up_price/limit_down_price 为调用方按 PIT 规则算好的价格；
+    规则来源由引擎内 LimitRuleResolver 记录，不在 Bar 上。"""
     bars = normalize_bars([
         {
             "date": 20240103,
@@ -13,9 +17,8 @@ def test_normalize_bars_preserves_missing_raw_open_for_fail_closed_execution():
             "close": 10.0,
             "mark_price": 5.0,
             "pre_close": 10.0,
-            "limit_up_ratio": 0.10,
-            "limit_down_ratio": 0.10,
-            "limit_rule_source": "pit_table",
+            "limit_up_price": 11.0,
+            "limit_down_price": 9.0,
         }
     ])
 
@@ -24,7 +27,8 @@ def test_normalize_bars_preserves_missing_raw_open_for_fail_closed_execution():
     assert bar.open is None
     assert bar.mark_price == 5.0
     assert bar.pre_close == 10.0
-    assert bar.limit_rule_source == "pit_table"
+    assert bar.limit_up_price == 11.0
+    assert bar.limit_down_price == 9.0
 
 
 def test_normalize_bars_mapping_accepts_bar_payload_with_nullable_ohlc():
