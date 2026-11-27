@@ -93,7 +93,7 @@ class Bar:
     exchange: str = ""
     # New dual-price/PIT fields are appended and should be passed by keyword.
     mark_price: float | None = None  # HFQ close; NAV mark only
-    pre_close: float | None = None   # Previous-session Raw close
+    pre_close: float | None = None   # Exchange price-limit reference; corporate-action adjusted on ex-right dates
     limit_up_ratio: float | None = None
     limit_down_ratio: float | None = None
     no_limit: bool = False    # Effective-dated rule says no daily price limit
