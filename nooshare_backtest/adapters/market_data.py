@@ -28,8 +28,10 @@ def normalize_bars(source: Mapping[int, Any] | Iterable[Any]) -> dict[int, dict[
         bar = item if isinstance(item, Bar) else Bar(
             date=_as_date(item["date"]),
             symbol=str(item["symbol"]),
-            open=float(item["open"]), high=float(item["high"]),
-            low=float(item["low"]), close=float(item["close"]),
+            open=(float(item["open"]) if item.get("open") is not None else None),
+            high=(float(item["high"]) if item.get("high") is not None else None),
+            low=(float(item["low"]) if item.get("low") is not None else None),
+            close=(float(item["close"]) if item.get("close") is not None else None),
             volume=(float(item["volume"]) if item.get("volume") is not None else None),
             ret=(float(item["ret"]) if item.get("ret") is not None else None),
             is_suspended=bool(item.get("is_suspended", False)),
