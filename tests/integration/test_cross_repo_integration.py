@@ -68,6 +68,10 @@ def result_to_runpackage(result, signals):
 class TestCrossRepoIntegration(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        if not NS.is_file():
+            raise unittest.SkipTest(
+                "requires the sibling nooshare checkout; run this cross-repo suite in the Pro workspace"
+            )
         cls.rp = load_runpackage_module()
 
     def test_full_chain_references_intact(self):
