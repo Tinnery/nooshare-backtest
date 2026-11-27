@@ -5,11 +5,14 @@
 
 时间语义：T 日收盘后的目标组合只在下一交易日（T+1）按开盘价执行。
 本内核不产生策略，只忠实执行给出的目标组合。
+
+V0.3：Trade ID 早期建立（首笔 BUY Fill 时确定性生成）、ExitEvent 完整身份、
+退出重试机制（pending_exit_event_id 在跌停拒绝后保留，后续日期继续尝试）。
 """
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Mapping
 
 from .accounting import Portfolio
@@ -20,10 +23,14 @@ from .models import (
     BacktestResult,
     Bar,
     CostSummary,
+    ExitEvent,
+    Fill,
     PositionView,
     RunMetadata,
     TargetDeviation,
     TargetPortfolio,
+    event_id,
+    exit_event_id,
 )
 from .rules import RuleSet
 from .trades import build_trades
@@ -43,12 +50,16 @@ class DecisionContext:
 
     date 为收盘决策日；positions 为 T+1 口径下的持仓视图
     （first_entry_date/first_entry_price 可用于路径依赖退出规则的建仓基准）。
+    trade_id 在首笔 BUY Fill 时建立，供退出事件关联。
+    pending_exits: 当前待退出状态 {symbol: exit_event_id}，策略可据此决定是否
+    复用已有退出事件而非创建新事件（退出重试机制）。
     """
     date: int
     bars: Mapping[str, Bar]
     positions: tuple[PositionView, ...]
     cash: float
     total_asset: float
+    pending_exits: Mapping[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -60,6 +71,29 @@ class EngineConfig:
     cost_model: CostModel = CostModel()
     rules: RuleSet = RuleSet()
     execution: ExecutionConfig = ExecutionConfig()
+
+
+def _pre_assign_trade_ids(fills: list[Fill], run_id: str) -> dict[str, list[str]]:
+    """Pre-scan fills to assign deterministic trade_ids.
+
+    Returns a dict mapping symbol to a list of trade_ids (one per trade lifecycle).
+    Handles close-and-reopen: each new position gets a new trade_id.
+    """
+    open_syms: set[str] = set()
+    seqs: dict[str, int] = {}
+    all_tids: dict[str, list[str]] = {}
+
+    for fill in fills:
+        if fill.side == "BUY" and fill.symbol not in open_syms:
+            seq = seqs.get(fill.symbol, 0)
+            tid = event_id(run_id, "trade", fill.symbol, seq)
+            seqs[fill.symbol] = seq + 1
+            open_syms.add(fill.symbol)
+            all_tids.setdefault(fill.symbol, []).append(tid)
+        elif fill.side == "SELL" and fill.symbol in open_syms:
+            open_syms.discard(fill.symbol)
+
+    return all_tids
 
 
 def run(
@@ -85,6 +119,7 @@ def run(
     orders: list = []
     fills: list = []
     deviations: list = []
+    exit_events: list[ExitEvent] = []
     cost_total = CostSummary()
 
     for date in dates:
@@ -100,6 +135,33 @@ def run(
             fills.extend(day_fills)
             orders.extend(day_orders)
             deviations.extend(day_devs)
+
+            # 首笔 BUY Fill 时建立 trade_id（确定性生成）
+            # 使用 pre-scan 方式，在循环结束后统一分配
+            # 此处仅更新 portfolio 的 trade_id 供 PositionView 使用
+            for fill in day_fills:
+                if fill.side == "BUY":
+                    pos = portfolio.positions.get(fill.symbol)
+                    if pos and not pos.trade_id:
+                        # 临时分配，后续会被 pre_assign 覆盖
+                        tid = event_id(cfg.run_id, "trade", fill.symbol, 0)
+                        portfolio.set_trade_id(fill.symbol, tid)
+
+            # 处理退出事件：
+            # - SELL 被拒绝（如 LIMIT_DOWN）→ 保留 pending_exit_event_id
+            # - 持仓完全平仓（shares == 0）→ 清除 pending_exit_event_id
+            # - 持仓仍有剩余 → 保留 pending_exit_event_id（继续卖出剩余）
+            for order in day_orders:
+                if order.side == "SELL" and order.exit_event_id:
+                    # 检查持仓是否完全平仓
+                    remaining_shares = portfolio.shares_of(order.symbol)
+                    if remaining_shares == 0:
+                        portfolio.clear_pending_exit(order.symbol)
+                    else:
+                        # 保留 pending_exit_event_id，后续日期继续尝试
+                        portfolio.set_pending_exit(order.symbol, order.exit_event_id)
+
+            # 累计成本
             for fill in day_fills:
                 cost_total = CostSummary(
                     commission=cost_total.commission + fill.commission,
@@ -116,14 +178,39 @@ def run(
 
         # 3) 收盘后接收当日决策，留待下一交易日执行
         if callable(targets):
+            # 构建 pending_exits 映射
+            pending_exits: dict[str, str] = {}
+            for sym in list(portfolio.positions.keys()):
+                pe = portfolio.get_pending_exit(sym)
+                if pe:
+                    pending_exits[sym] = pe
             ctx = DecisionContext(
                 date=date,
                 bars=day_bars,
                 positions=tuple(portfolio.position_views(date)),
                 cash=portfolio.cash,
                 total_asset=point.total_asset,
+                pending_exits=pending_exits,
             )
-            pending = targets(ctx)
+            result_target = targets(ctx)
+            pending = result_target
+            # 收集策略回调产生的 ExitEvent
+            if pending is not None:
+                for sym, eid in pending.exit_event_ids.items():
+                    reason = pending.decision_reasons.get(sym, "")
+                    bar = day_bars.get(sym)
+                    ref_price = bar.close if bar else 0.0
+                    ee = ExitEvent(
+                        exit_event_id=eid,
+                        trade_id=portfolio.get_trade_id(sym),
+                        symbol=sym,
+                        decision_date=date,
+                        reason=reason,
+                        reference_price=ref_price,
+                    )
+                    exit_events.append(ee)
+                    # 设置 pending_exit 以便后续重试
+                    portfolio.set_pending_exit(sym, eid)
         else:
             pending = targets.get(date)
 
@@ -135,8 +222,15 @@ def run(
                 target_shares=0, filled_shares=0, reason="NO_NEXT_SESSION",
             ))
 
+    # Pre-scan fills to assign deterministic trade_ids (reproducible, not UUID4).
+    # This handles close-and-reopen correctly: each new position gets a new trade_id.
+    all_trade_ids = _pre_assign_trade_ids(fills, cfg.run_id)
+
     # 从实际成交事件流构建交易生命周期与分配关系
-    trades, allocations = build_trades(fills, dates, run_id=cfg.run_id, orders=orders)
+    trades, allocations = build_trades(
+        fills, dates, run_id=cfg.run_id, orders=orders,
+        pre_assigned_trade_ids=all_trade_ids,
+    )
 
     ledger = list(portfolio.ledger)
     metadata = RunMetadata(
@@ -160,7 +254,7 @@ def run(
         fill_policy=FILL_POLICY,
     )
     metrics = compute_metrics(equity_curve, fills, cfg.initial_cash)
-    metrics["trade_count"] = float(len(trades))  # 交易生命周期数，不是 Fill 数
+    metrics["trade_count"] = float(len(trades))
     return BacktestResult(
         metadata=metadata,
         equity_curve=equity_curve,
@@ -173,4 +267,5 @@ def run(
         costs=cost_total,
         metrics=metrics,
         deviations=deviations,
+        exit_events=exit_events,
     )

@@ -29,6 +29,8 @@ class _Position:
     shares: int
     cost_basis: float          # 持仓总成本（含买入费用）
     lots: list[_Lot] = field(default_factory=list)
+    trade_id: str = ""         # 首笔 BUY Fill 时建立的 Trade UUID4
+    pending_exit_event_id: str = ""  # 待退出事件 ID（退出重试机制）
 
     @property
     def avg_cost(self) -> float:
@@ -85,11 +87,14 @@ class Portfolio:
             # 每笔买入形成独立批次，保留真实买入日
             pos.lots.append(_Lot(shares=fill.shares, cost_basis=paid, bought_date=fill.date,
                                  pure_price=fill.price))
+            # 首笔 BUY Fill 时建立 trade_id（由引擎传入）
+            # trade_id 在引擎层设置，此处不生成
         else:  # SELL
             pos = self.positions[fill.symbol]
             pos.consume(fill.shares)
             if pos.shares == 0:
                 del self.positions[fill.symbol]
+            # 部分成交后继续保留 pending_exit_event_id，完全平仓后自动清除
         self.ledger.append(LedgerEntry(
             date=fill.date,
             kind=fill.side,
@@ -113,7 +118,7 @@ class Portfolio:
         return pos.shares if pos else 0
 
     def position_views(self, date: int) -> list[PositionView]:
-        """产出决策回调用的持仓视图（存活最早批次 + T+1 可卖数）。
+        """产出决策回调用的持仓视图（存活最早批次 + T+1 可卖数 + trade_id + pending_exit）。
 
         lots 由 FIFO 消费保持按买入日有序，首个批次即存活最早批次。
         """
@@ -127,6 +132,8 @@ class Portfolio:
                 first_entry_price=first.pure_price if first else pos.avg_cost,
                 first_entry_date=first.bought_date if first else date,
                 sellable_shares=self.sellable_shares(symbol, date),
+                trade_id=pos.trade_id,
+                pending_exit_event_id=pos.pending_exit_event_id,
             ))
         return views
 
@@ -159,3 +166,31 @@ class Portfolio:
             note=f"total={point.total_asset} nav={point.nav}",
         ))
         return point, snaps
+
+    def set_trade_id(self, symbol: str, trade_id: str) -> None:
+        """设置持仓的 trade_id（首笔 BUY Fill 时调用）。"""
+        pos = self.positions.get(symbol)
+        if pos and not pos.trade_id:
+            pos.trade_id = trade_id
+
+    def set_pending_exit(self, symbol: str, exit_event_id: str) -> None:
+        """设置待退出事件 ID（首次触发止盈止损时调用）。"""
+        pos = self.positions.get(symbol)
+        if pos:
+            pos.pending_exit_event_id = exit_event_id
+
+    def clear_pending_exit(self, symbol: str) -> None:
+        """清除待退出事件 ID（完全平仓后调用）。"""
+        pos = self.positions.get(symbol)
+        if pos:
+            pos.pending_exit_event_id = ""
+
+    def get_trade_id(self, symbol: str) -> str:
+        """获取持仓的 trade_id。"""
+        pos = self.positions.get(symbol)
+        return pos.trade_id if pos else ""
+
+    def get_pending_exit(self, symbol: str) -> str:
+        """获取待退出事件 ID。"""
+        pos = self.positions.get(symbol)
+        return pos.pending_exit_event_id if pos else ""

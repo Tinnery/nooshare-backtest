@@ -7,6 +7,9 @@
 Trade 不是通过股票代码+日期启发式配对，而是由实际 Fill 事件产生。
 成本分配使用移动加权平均（与 Portfolio 总账一致），每个 Fill 的归属通过
 TradeFillAllocation 明确记录，ENTRY/EXIT 数量与成交可对账。
+
+V0.3：支持 pre_assigned_trade_ids（引擎在首笔 BUY Fill 时已建立的 trade_id），
+build_trades 复用该 ID 而非重新生成，保证 Trade ID 稳定性。
 """
 from __future__ import annotations
 
@@ -40,17 +43,24 @@ def build_trades(
     trading_dates: list[int],
     run_id: str = "run",
     orders: list | None = None,
+    pre_assigned_trade_ids: dict[str, list[str]] | None = None,
 ) -> tuple[list[Trade], list[TradeFillAllocation]]:
     """按时间顺序消费 Fill，构建完整 Trade 生命周期与分配记录。
 
     fills 必须已按 (date, 卖出先于买入) 的执行顺序排列——引擎保证该顺序。
     orders 可选：提供时从 BUY Order 提取 signal_id 写入 initial_signal_id，
     从 SELL Order 提取 decision_reason 写入 exit_reason。
+    pre_assigned_trade_ids: 引擎在首笔 BUY Fill 时已建立的 trade_id（symbol -> list[trade_id]），
+    build_trades 按顺序复用这些 ID，保证 Trade ID 稳定性。
     """
     trades: list[Trade] = []
     allocations: list[TradeFillAllocation] = []
     open_trades: dict[str, _OpenTrade] = {}
     trade_seq = 0
+    pre_assigned = pre_assigned_trade_ids or {}
+    # 跟踪每个 symbol 当前使用的 trade_id 索引
+    tid_indices: dict[str, int] = {}
+
     # 构建 order_id -> Order 映射，供 Fill 反查 signal_id / decision_reason
     order_map: dict[str, any] = {}
     if orders:
@@ -62,8 +72,20 @@ def build_trades(
         t = open_trades.get(fill.symbol)
         if fill.side == "BUY":
             if t is None:
-                tid = event_id(run_id, "trade", fill.symbol, trade_seq)
-                trade_seq += 1
+                # 优先使用引擎已建立的 trade_id（按顺序取）
+                if fill.symbol in pre_assigned:
+                    idx = tid_indices.get(fill.symbol, 0)
+                    tids = pre_assigned[fill.symbol]
+                    if idx < len(tids):
+                        tid = tids[idx]
+                        tid_indices[fill.symbol] = idx + 1
+                    else:
+                        # 兜底：如果预分配的不够用，生成新的
+                        tid = event_id(run_id, "trade", fill.symbol, trade_seq)
+                        trade_seq += 1
+                else:
+                    tid = event_id(run_id, "trade", fill.symbol, trade_seq)
+                    trade_seq += 1
                 # 从 BUY Order 提取 signal_id 作为 initial_signal_id
                 init_sig = ""
                 if fill.order_id and fill.order_id in order_map:
