@@ -20,6 +20,13 @@ from tests.fixtures.lifecycle import D1, D2, D3, D4, D5
 WS = Path(__file__).resolve().parents[3]  # .../track-b-20261125
 NS = WS / "nooshare" / "backend" / "app" / "runpackage.py"
 
+# 本测试需要 nooshare 产品仓的 runpackage.py（纯标准库模块）。
+# 该文件不属于本仓，在独立 checkout / CI 中不存在；此时必须跳过，
+# 不能因为外部依赖缺失就把整个测试套件判为失败。
+HAS_NS = NS.is_file()
+requires_ns = unittest.skipUnless(
+    HAS_NS, f"nooshare runpackage.py not available at {NS}")
+
 
 def load_runpackage_module():
     spec = importlib.util.spec_from_file_location("ns_runpackage", NS)
@@ -62,6 +69,7 @@ def result_to_runpackage(result, signals):
     }
 
 
+@requires_ns
 class TestCrossRepoIntegration(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
