@@ -72,6 +72,11 @@ class Portfolio:
     positions: dict[str, _Position] = field(default_factory=dict)
     ledger: list[LedgerEntry] = field(default_factory=list)
     enable_t_plus_1: bool = True
+    # Round-4 §9.1: last valid Raw mark price per symbol. A position held on
+    # a day whose bar is missing must be marked at the LAST VALID Raw close,
+    # not the cost basis — cost-basis marking fabricates a price jump from
+    # the real last close back to the entry cost.
+    last_valid_mark: dict[str, float] = field(default_factory=dict)
 
     def apply_fill(self, fill: Fill) -> None:
         """把一笔成交落入现金与持仓批次，并写账本。"""
@@ -137,14 +142,26 @@ class Portfolio:
         return views
 
     def mark(self, date: int, bars: dict[str, Bar], initial_cash: float) -> tuple[EquityPoint, list[PositionSnapshot]]:
-        """按收盘价盯市，产出权益点与持仓快照。缺失行情按最近成本估值。"""
+        """按收盘价盯市，产出权益点与持仓快照。
+
+        盯市价格来源（round-4 §9.1 契约）：
+          1. 当日有效 Raw mark_price / Raw close —— 权威价格，并记录为该
+             持仓的 last_valid_mark；
+          2. 当日无 Bar（停牌/缺失行情）—— 使用该持仓最近一次有效 Raw
+             close 盯市（陈旧但真实的价格），绝不回退到持仓成本：成本回退
+             会把账户估值从真实最后收盘价人为拉回建仓成本，制造虚假价格
+             跳变；快照 price_stale=True 显式区分陈旧盯市；
+          3. 从未取得过有效价格 —— 显式失败。持仓只能由成交建立，成交必须
+             发生在有行情的日期，该状态意味着上游数据损坏，静默按成本
+             伪造估值不可接受。
+        """
         market_value = 0.0
         snaps: list[PositionSnapshot] = []
         for symbol, pos in sorted(self.positions.items()):
             bar = bars.get(symbol)
             # V0.7（X5-B）：mark_price 为账户盯市估值价，上游必须传 Raw close；
-            # 缺失时回退 Raw close；两者都缺按最近成本估值。
-            # 禁止用 HFQ 价盯市——绝对 HFQ 价内含上市以来全部复权因子。
+            # 缺失时回退 Raw close。禁止用 HFQ 价盯市——绝对 HFQ 价内含
+            # 上市以来全部复权因子。
             px = None
             if bar is not None:
                 # isfinite 防护：NaN 被 >0 判断天然排除，但 inf > 0 为 True 会污染账务
@@ -152,14 +169,26 @@ class Portfolio:
                     px = bar.mark_price
                 elif bar.close and bar.close > 0 and isfinite(bar.close):
                     px = bar.close
-            if px is None:
-                px = pos.avg_cost
+            # price_stale 语义（round-5 纠偏）：只有实际使用历史 last_valid_mark
+            # 时才算陈旧。当日 Bar 存在、mark_price 无效但 Raw close 有效时，
+            # 用的是当日真实价格，不得误标 stale。
+            used_today = px is not None
+            if used_today:
+                self.last_valid_mark[symbol] = px
+            else:
+                px = self.last_valid_mark.get(symbol)
+                if px is None:
+                    raise ValueError(
+                        f"mark({date}): 持仓 {symbol} 无当日行情且从未取得过"
+                        f"有效盯市价格；上游数据损坏，拒绝静默按成本伪造估值"
+                    )
             mv = px * pos.shares
             market_value += mv
             snaps.append(PositionSnapshot(
                 date=date, symbol=symbol, shares=pos.shares,
                 avg_cost=round(pos.avg_cost, 6), last_price=px,
                 market_value=round(mv, 6),
+                price_stale=not used_today,
             ))
         total = self.cash + market_value
         nav = total / initial_cash if initial_cash else 0.0

@@ -170,5 +170,44 @@ class TestNoMarketData(unittest.TestCase):
         self.assertEqual(buys[0].date, 20240105, "顺延到下一个有行情交易日成交")
 
 
+
+
+class TestResumptionDayLimitReference(unittest.TestCase):
+    """§9.2（Data Correctness Closure）：停牌跨日顺延 → 复牌日保守拒绝。
+
+    真实数据形状（DEV 实证）：Raw 行情 VIEW 停牌日无行（volume=0 行数=0），
+    复牌日 Bar 的 pre_close 由 Strategy 面板 shift(1) 取停牌日 NaN → None。
+    停牌日整日缺失触发挂单顺延语义（E21b），订单在复牌日执行——此时
+    pre_close 缺失，开盘可能处于涨跌停锁定，必须保守拒绝，不得以不复核
+    限价的价格成交（宁可不交易，不可假交易）。
+    """
+
+    def test_deferred_order_rejected_at_resumption_without_pre_close(self):
+        bars = {
+            20240102: {SYM: bar(20240102, 10.0, 10.0, pre_close=10.0)},
+            # 20240103 / 20240104 停牌：整日缺失（真实路径无停牌行情行）
+            # 复牌日 20240105：pre_close=None（shift(1) 取停牌日 NaN）
+            20240105: {SYM: bar(20240105, 10.0, 10.0, pre_close=None)},
+        }
+
+        def decide(ctx: DecisionContext):
+            if ctx.date == 20240102:
+                return TargetPortfolio(decision_date=ctx.date, weights={SYM: 0.5})
+            return None
+
+        result = run(bars, decide, EngineConfig(run_id="s92-resumption"))
+        self.assertEqual(len(result.fills), 0, "复牌日参考价缺失不得成交")
+        rejected = [o for o in result.orders if o.status == "REJECTED"]
+        resumption_rejects = [o for o in rejected
+                              if o.reason == "LIMIT_REFERENCE_UNKNOWN"]
+        self.assertTrue(
+            resumption_rejects,
+            [(o.status, o.reason, o.date) for o in result.orders])
+        self.assertEqual(
+            resumption_rejects[0].date, 20240105,
+            "拒绝必须发生在复牌日（跨停牌顺延后）")
+        self.assertEqual(resumption_rejects[0].decision_date, 20240102)
+
+
 if __name__ == "__main__":
     unittest.main()
