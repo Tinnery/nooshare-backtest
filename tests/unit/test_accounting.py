@@ -74,3 +74,72 @@ class TestMarkPriceFiniteGuard(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class TestMissingBarMarking(unittest.TestCase):
+    """Round-4 §9.1 手算 Fixture：T-1 有效 Raw close → T 停牌缺失 Bar
+    → T+1 复牌。
+
+    合同：缺失行情日的持仓盯市用最近一次有效 Raw close（陈旧但真实），
+    绝不回退到持仓成本——成本回退会把估值从真实最后收盘价人为拉回
+    建仓成本（10 → 12 的虚假价格跳变）。快照 price_stale 显式区分
+    当前有效行情与陈旧盯市价格。"""
+
+    def _portfolio_with_position(self):
+        from nooshare_backtest.accounting import Portfolio
+        pf = Portfolio(cash=100_000.0)
+        # 成本 12 元/股（含费用），1000 股 → cost 12,000
+        buy = make_fill(20240101, "AAA", "BUY", 1_000, 12.0)
+        pf.apply_fill(buy)
+        return pf
+
+    def _bars(self, date, close):
+        from nooshare_backtest.models import Bar
+        return {"AAA": Bar(date, "AAA", close, close, close, close,
+                           mark_price=close)}
+
+    def test_suspension_day_marks_at_last_valid_close_not_cost(self):
+        pf = self._portfolio_with_position()
+        # T-1: 真实 Raw close 10.0（低于成本 12）
+        eq1, snaps1 = pf.mark(20240102, self._bars(20240102, 10.0), 100_000.0)
+        self.assertEqual(snaps1[-1].last_price, 10.0)
+        self.assertFalse(snaps1[-1].price_stale)
+        # 手算：market_value = 10 * 1000 = 10,000（不是成本 12,000）
+        self.assertAlmostEqual(snaps1[-1].market_value, 10_000.0, places=6)
+
+        # T: 停牌，无 Bar
+        eq2, snaps2 = pf.mark(20240103, {}, 100_000.0)
+        self.assertEqual(snaps2[-1].last_price, 10.0,
+                         "停牌日必须盯在最后有效 Raw close，不得回退成本 12")
+        self.assertTrue(snaps2[-1].price_stale,
+                        "陈旧盯市必须显式标记 price_stale=True")
+        # 手算：估值保持 10,000，无虚假跳变
+        self.assertAlmostEqual(snaps2[-1].market_value, 10_000.0, places=6)
+        self.assertAlmostEqual(eq2.market_value, 10_000.0, places=6)
+
+        # T+1: 复牌，真实 Raw close 11.0
+        eq3, snaps3 = pf.mark(20240104, self._bars(20240104, 11.0), 100_000.0)
+        self.assertEqual(snaps3[-1].last_price, 11.0)
+        self.assertFalse(snaps3[-1].price_stale,
+                         "复牌日恢复真实 Raw close 盯市，不再是陈旧价")
+        self.assertAlmostEqual(snaps3[-1].market_value, 11_000.0, places=6)
+
+    def test_inf_mark_price_day_treated_as_stale_and_falls_back(self):
+        pf = self._portfolio_with_position()
+        # T-1 valid close
+        pf.mark(20240102, self._bars(20240102, 10.0), 100_000.0)
+        # T: bar 存在但 mark_price 与 close 全为 inf（污染数据）
+        from nooshare_backtest.models import Bar
+        bad = {"AAA": Bar(20240103, "AAA", float("inf"), float("inf"),
+                          float("inf"), float("inf"),
+                          mark_price=float("inf"))}
+        eq, snaps = pf.mark(20240103, bad, 100_000.0)
+        self.assertEqual(snaps[-1].last_price, 10.0)
+        self.assertTrue(snaps[-1].price_stale)
+        self.assertAlmostEqual(eq.market_value, 10_000.0, places=6)
+
+    def test_never_marked_position_without_bar_raises(self):
+        """从未取得有效价格（上游数据损坏）必须显式失败，不得静默按
+        成本伪造估值。"""
+        pf = self._portfolio_with_position()
+        with self.assertRaises(ValueError):
+            pf.mark(20240102, {}, 100_000.0)

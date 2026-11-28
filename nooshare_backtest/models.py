@@ -291,6 +291,10 @@ class PositionSnapshot:
     avg_cost: float           # 含买入成本的每股成本
     last_price: float
     market_value: float
+    # Round-4 §9.1: True when last_price is NOT the current day's valid Raw
+    # mark price (bar missing/unusable → marked at last valid Raw close).
+    # Distinguishes a live mark from a stale one explicitly.
+    price_stale: bool = False
 
 
 @dataclass(frozen=True)
