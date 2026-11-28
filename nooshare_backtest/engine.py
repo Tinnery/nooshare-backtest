@@ -42,7 +42,7 @@ from .trades import build_trades
 
 FILL_POLICY = (
     "T+1 next-session open (NEXT_OPEN); raw-price execution with conservative no-fill"
-    " at limit-open; HFQ research mark-to-market; daily OHLC simulated fills;"
+    " at limit-open; Raw close mark-to-market; daily OHLC simulated fills;"
     " no intraday queue reconstruction"
 )
 ENGINE_VERSION = "0.4.0"
@@ -388,7 +388,7 @@ def run(
             "transfer_bp": cfg.cost_model.transfer_bp,
             "enable_t_plus_1": cfg.rules.enable_t_plus_1,
             "enable_st_filter": cfg.rules.enable_st_filter,
-            "price_convention": "raw_execution_hfq_mark",
+            "price_convention": "raw_execution_raw_mark",
             "trading_days": len(dates),
         },
         strategy_version=cfg.strategy_version,
