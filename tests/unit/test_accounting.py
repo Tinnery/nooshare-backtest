@@ -143,3 +143,54 @@ class TestMissingBarMarking(unittest.TestCase):
         pf = self._portfolio_with_position()
         with self.assertRaises(ValueError):
             pf.mark(20240102, {}, 100_000.0)
+
+
+class TestPriceStaleSemantics(unittest.TestCase):
+    """Round-5 纠偏：price_stale 只在真正使用历史 last_valid_mark 时为 True。
+
+    当日 Bar 存在、mark_price 缺失/无效但 Raw close 有效时，
+    实际使用的是当日真实价格，不得误标为陈旧。"""
+
+    def _pf(self):
+        from nooshare_backtest.accounting import Portfolio
+        pf = Portfolio(cash=100_000.0)
+        pf.apply_fill(make_fill(20240101, "AAA", "BUY", 1_000, 12.0))
+        return pf
+
+    def test_mark_price_none_but_close_valid_is_not_stale(self):
+        from nooshare_backtest.models import Bar
+        pf = self._pf()
+        bars = {"AAA": Bar(20240102, "AAA", 11.0, 11.0, 11.0, 11.0,
+                           mark_price=None)}
+        eq, snaps = pf.mark(20240102, bars, 100_000.0)
+        s = snaps[-1]
+        self.assertEqual(s.last_price, 11.0, "应用当日 Raw close")
+        self.assertFalse(s.price_stale,
+                         "当日真实价格盯市不得误标 stale")
+        self.assertAlmostEqual(s.market_value, 11_000.0, places=6)
+
+    def test_mark_price_nan_but_close_valid_is_not_stale(self):
+        from nooshare_backtest.models import Bar
+        pf = self._pf()
+        bars = {"AAA": Bar(20240102, "AAA", 11.0, 11.0, 11.0, 11.0,
+                           mark_price=float("nan"))}
+        eq, snaps = pf.mark(20240102, bars, 100_000.0)
+        self.assertEqual(snaps[-1].last_price, 11.0)
+        self.assertFalse(snaps[-1].price_stale)
+
+    def test_consecutive_suspension_days_all_stale_at_last_close(self):
+        from nooshare_backtest.models import Bar
+        pf = self._pf()
+        pf.mark(20240102, {"AAA": Bar(20240102, "AAA", 10.0, 10.0, 10.0, 10.0,
+                                      mark_price=10.0)}, 100_000.0)
+        # 连续 3 天停牌
+        for d in (20240103, 20240104, 20240105):
+            eq, snaps = pf.mark(d, {}, 100_000.0)
+            self.assertEqual(snaps[-1].last_price, 10.0)
+            self.assertTrue(snaps[-1].price_stale)
+            self.assertAlmostEqual(eq.market_value, 10_000.0, places=6)
+        # 复牌
+        eq, snaps = pf.mark(20240106, {"AAA": Bar(20240106, "AAA", 9.5, 9.5, 9.5, 9.5,
+                                                  mark_price=9.5)}, 100_000.0)
+        self.assertEqual(snaps[-1].last_price, 9.5)
+        self.assertFalse(snaps[-1].price_stale)

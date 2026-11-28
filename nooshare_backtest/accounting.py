@@ -169,7 +169,11 @@ class Portfolio:
                     px = bar.mark_price
                 elif bar.close and bar.close > 0 and isfinite(bar.close):
                     px = bar.close
-            if px is not None:
+            # price_stale 语义（round-5 纠偏）：只有实际使用历史 last_valid_mark
+            # 时才算陈旧。当日 Bar 存在、mark_price 无效但 Raw close 有效时，
+            # 用的是当日真实价格，不得误标 stale。
+            used_today = px is not None
+            if used_today:
                 self.last_valid_mark[symbol] = px
             else:
                 px = self.last_valid_mark.get(symbol)
@@ -184,11 +188,7 @@ class Portfolio:
                 date=date, symbol=symbol, shares=pos.shares,
                 avg_cost=round(pos.avg_cost, 6), last_price=px,
                 market_value=round(mv, 6),
-                price_stale=(
-                    bar is None
-                    or bar.mark_price is None
-                    or not (bar.mark_price > 0 and isfinite(bar.mark_price))
-                ),
+                price_stale=not used_today,
             ))
         total = self.cash + market_value
         nav = total / initial_cash if initial_cash else 0.0
