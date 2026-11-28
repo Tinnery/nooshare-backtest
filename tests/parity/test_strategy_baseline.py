@@ -11,7 +11,7 @@ from nooshare_backtest.api import run_backtest
 from nooshare_backtest.costs import CostModel
 from nooshare_backtest.metrics import TRADING_DAYS_PER_YEAR
 
-from tests.fixtures.sample import (
+from tests.builders.sample import (
     D2, EXPECTED_AAA_BUY_CASH, sample_bars, sample_decisions,
 )
 

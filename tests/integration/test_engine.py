@@ -8,7 +8,7 @@ from pathlib import Path
 from nooshare_backtest.api import run_backtest
 from nooshare_backtest.reports import render_html
 
-from tests.fixtures.sample import (
+from tests.builders.sample import (
     D1, D2, D3, D4,
     EXPECTED_AAA_BUY_CASH, EXPECTED_AAA_BUY_SHARES,
     EXPECTED_BBB_BUY_CASH, EXPECTED_BBB_BUY_SHARES,

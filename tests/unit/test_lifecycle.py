@@ -3,14 +3,14 @@ import json
 import unittest
 
 from nooshare_backtest.api import run_backtest
-from tests.fixtures.preclose import backfill_pre_close
+from tests.builders.preclose import backfill_pre_close
 from nooshare_backtest.engine import EngineConfig, run
 from nooshare_backtest.execution import ExecutionConfig
 from nooshare_backtest.models import (
     BacktestResult, Bar, SCHEMA_VERSION, TargetPortfolio, result_from_dict,
 )
 
-from tests.fixtures.lifecycle import (
+from tests.builders.lifecycle import (
     D1, D2, D3, D4, D5,
     limit_up_bars, multi_lot_bars, normal_bars, open_position_bars,
 )

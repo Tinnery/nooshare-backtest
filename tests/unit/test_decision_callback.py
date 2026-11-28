@@ -9,7 +9,7 @@ from __future__ import annotations
 import pytest
 
 from nooshare_backtest.engine import DecisionContext, EngineConfig, run
-from tests.fixtures.preclose import backfill_pre_close
+from tests.builders.preclose import backfill_pre_close
 from nooshare_backtest.models import Bar, TargetPortfolio
 
 

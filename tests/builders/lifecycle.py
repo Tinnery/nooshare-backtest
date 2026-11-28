@@ -1,4 +1,4 @@
-"""可手工计算的交易生命周期 Fixture（P2/P3/P9）。
+"""可手工计算的交易生命周期测试数据构造器（P2/P3/P9）。
 
 覆盖：涨停拒绝、资金不足部分买入、部分卖出、多批 Entry+T+1、
 完整 Trade Lifecycle、开放持仓、最后交易日决策。
@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 from nooshare_backtest.models import Bar
-from tests.fixtures.preclose import backfill_pre_close
+from tests.builders.preclose import backfill_pre_close
 
 D1, D2, D3, D4, D5, D6 = 20240102, 20240103, 20240104, 20240105, 20240108, 20240109
 

@@ -12,10 +12,10 @@ import unittest
 from pathlib import Path
 
 from nooshare_backtest.engine import EngineConfig, run
-from tests.fixtures.preclose import backfill_pre_close
+from tests.builders.preclose import backfill_pre_close
 from nooshare_backtest.models import Bar, TargetPortfolio
 
-from tests.fixtures.lifecycle import D1, D2, D3, D4, D5
+from tests.builders.lifecycle import D1, D2, D3, D4, D5
 
 WS = Path(__file__).resolve().parents[3]  # .../track-b-20261125
 NS = WS / "nooshare" / "backend" / "app" / "runpackage.py"
@@ -57,12 +57,11 @@ def result_to_runpackage(result, signals):
     bt = result.to_dict()
     return {
         "schema_version": 1,
-        "fixture": True,
         "run": {
             "run_id": result.metadata.run_id,
             "experiment_id": "exp-e2e",
             "variant_id": "var-e2e",
-            "strategy_commit": "fixture",
+            "strategy_commit": "e2e-test",
         },
         "signals": signals,
         "backtest_result": bt,
@@ -91,7 +90,7 @@ class TestCrossRepoIntegration(unittest.TestCase):
 
     def test_trade_to_order_to_signal_chain(self):
         result = make_result()
-        # 每笔 Trade 的 initial_signal_id 可回溯（本 fixture 中 order 带 signal_id）
+        # 每笔 Trade 的 initial_signal_id 可回溯（本用例中 order 带 signal_id）
         self.assertTrue(result.trades)
         buy_orders = [o for o in result.orders if o.side == "BUY" and o.signal_id]
         self.assertTrue(buy_orders)

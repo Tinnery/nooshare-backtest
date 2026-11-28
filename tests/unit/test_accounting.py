@@ -29,7 +29,7 @@ class TestPortfolio(unittest.TestCase):
         self.assertEqual(len(p.ledger), 2)
 
     def test_mark_produces_nav_and_snapshot(self):
-        from tests.fixtures.sample import sample_bars
+        from tests.builders.sample import sample_bars
 
         bars = sample_bars()
         p = Portfolio(cash=1_000_000.0)

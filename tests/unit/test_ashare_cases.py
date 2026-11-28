@@ -1,6 +1,6 @@
-"""A 股 Level-1 执行手算 Fixture（E1-E18，任务书 Phase 5）。
+"""A 股 Level-1 执行手算用例（E1-E18，任务书 Phase 5）。
 
-每个 Fixture 手算预期：订单数、成交数、成交价、佣金、印花税、现金、持仓、
+每个用例手算预期：订单数、成交数、成交价、佣金、印花税、现金、持仓、
 Trade 状态、PnL——不是布尔断言。真实样本数值取自 Phase 0 探查
 （nooshare-design/implementation-docs/nooshare-backtest/phase0-dev-data-audit.md）：
   - sh600010 20251013  pc=2.54 -> 涨停 2.79（开盘涨停、盘中开板）

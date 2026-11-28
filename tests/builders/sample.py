@@ -1,4 +1,4 @@
-"""手工可计算的小型 Fixture：少量交易日、两只股票、简单目标仓位。"""
+"""手工可计算的小型测试数据构造器：少量交易日、两只股票、简单目标仓位。"""
 from __future__ import annotations
 
 from nooshare_backtest.models import Bar
@@ -6,7 +6,7 @@ from nooshare_backtest.models import Bar
 D1, D2, D3, D4 = 20240102, 20240103, 20240104, 20240105
 
 
-from tests.fixtures.preclose import backfill_pre_close
+from tests.builders.preclose import backfill_pre_close
 
 
 def sample_bars() -> dict[int, dict[str, Bar]]:
